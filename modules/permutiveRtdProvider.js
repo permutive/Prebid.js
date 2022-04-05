@@ -64,57 +64,43 @@ function getModuleConfig (customModuleConfig) {
  * Sets ortb2 config for ac bidders
  * @param {Object} auctionDetails
  * @param {Object} customModuleConfig - Publisher config for module
+ * @param {Object} iabTaxonomyData - data required for IAB taxonomy transformations (provided by Permutive SDK)
  */
-export function setBidderRtb (auctionDetails, customModuleConfig) {
+export function setBidderRtb (auctionDetails, customModuleConfig, iabTaxonomyData) {
+  const dataProviderName = 'permutive.com'
+
   const bidderConfig = config.getBidderConfig()
   const moduleConfig = getModuleConfig(customModuleConfig)
   const acBidders = deepAccess(moduleConfig, 'params.acBidders')
   const maxSegs = deepAccess(moduleConfig, 'params.maxSegs')
-  const transformationConfigs = deepAccess(moduleConfig, 'params.transformations') || []
+  const enabledIabTaxonomies = deepAccess(moduleConfig, 'params.iabTaxonomies') || []
   const segmentData = getSegments(maxSegs)
 
+  const permutiveUserData = {
+    name: dataProviderName,
+    segment: segmentData.ac.map(segmentId => ({ id: segmentId })),
+  }
+
+  const iabUserData = createIabUserData(permutiveUserData, enabledIabTaxonomies, iabTaxonomyData)
+
+  const userDataToAdd = iabUserData.length ? iabUserData.concat(permutiveUserData) : [permutiveUserData]
+
   acBidders.forEach(function (bidder) {
-    const currConfig = bidderConfig[bidder] || {}
-    const nextConfig = mergeOrtbConfig(currConfig, segmentData.ac, transformationConfigs) // ORTB2 uses the `ac` segment IDs
+    const ortbConfig = bidderConfig[bidder] || {}
+
+    const currentUserData = deepAccess(ortbConfig, 'ortb2.user.data') || []
+
+    const updatedUserData = currentUserData
+      .filter(el => el.name !== dataProviderName)
+      .concat(userDataToAdd)
+
+    deepSetValue(ortbConfig, 'ortb2.user.data', updatedUserData)
 
     config.setBidderConfig({
       bidders: [bidder],
-      config: nextConfig
+      config: ortbConfig
     })
   })
-}
-
-/**
- * Merges segment data into existing bidder config
- * Segments are retrieved from the `ac` property of `segmentData`
- * @param {Object} currConfig - Current bidder config
- * @param {Object[]} transformationConfigs - array of objects with `id` and `config` properties, used to determine
- *                                           the transformations on user data to include the ORTB2 object
- * @param {string[]} segmentIDs - Permutive segment IDs
- * @return {Object} Merged ortb2 object
- */
-function mergeOrtbConfig (currConfig, segmentIDs, transformationConfigs) {
-  const name = 'permutive.com'
-
-  const permutiveUserData = {
-    name,
-    segment: segmentIDs.map(segmentId => ({ id: segmentId })),
-  }
-
-  const transformedUserData = transformationConfigs
-    .filter(({ id }) => ortb2UserDataTransformations.hasOwnProperty(id))
-    .map(({ id, config }) => ortb2UserDataTransformations[id](permutiveUserData, config))
-
-  const ortbConfig = mergeDeep({}, currConfig)
-  const currentUserData = deepAccess(ortbConfig, 'ortb2.user.data') || []
-
-  const updatedUserData = currentUserData
-    .filter(el => el.name !== name)
-    .concat(permutiveUserData, transformedUserData)
-
-  deepSetValue(ortbConfig, 'ortb2.user.data', updatedUserData)
-
-  return ortbConfig
 }
 
 /**
@@ -275,29 +261,22 @@ function readSegments (key) {
 const unknownIabSegmentId = '_unknown_'
 
 /**
- * Functions to apply to ORT2B2 `user.data` objects.
- * Each function should return an a new object containing a `name`, (optional) `ext` and `segment`
- * properties. The result of the each transformation defined here will be appended to the array
- * under `user.data` in the bid request.
+ * Function to create a new `user.data` objects for a IAB taxonomies.
+ * @param  {number} userData              ORTB2 `user.data` object with (at least) `name` and `segment` properties
+ * @param  {Object} enabledIabTaxonomies  array of objects with `id` keys representing IDs of IAB taxonomies
+ * @param  {Object} iabTaxonomyData       object keyed by IAB taxonomy ID containing objects with `mappings` properties
+ * @return {array}                        array of user data objects, transformed accordisng to enabled IAB taxonomies
  */
-const ortb2UserDataTransformations = {
-  iabAudienceTaxonomy11: (userData, config) => ({
-    name: userData.name,
-    ext: { segtax: '4' },
-    segment: (userData.segment || [])
-      .map(segment => ({ id: iabSegmentId(segment.id, config.iabIds) }))
-      .filter(segment => segment.id !== unknownIabSegmentId)
-  })
-}
-
-/**
- * Transform a Permutive segment ID into an IAB audience taxonomy ID.
- * @param {string} permutiveSegmentId
- * @param {Object} iabIds object of mappings between Permutive and IAB segment IDs (key: permutive ID, value: IAB ID)
- * @return {string} IAB audience taxonomy ID associated with the Permutive segment ID
- */
-function iabSegmentId(permutiveSegmentId, iabIds) {
-  return iabIds[permutiveSegmentId] || unknownIabSegmentId
+export function createIabUserData(userData, enabledIabTaxonomies, iabTaxonomyData) {
+  return enabledIabTaxonomies
+    .filter(({ id: taxonomyID }) => iabTaxonomyData.hasOwnProperty(taxonomyID))
+    .map(({ id: taxonomyID }) => ({
+      name: userData.name,
+      ext: { segtax: taxonomyID },
+      segment: (userData.segment || [])
+        .map(segment => ({ id: (iabTaxonomyData[taxonomyID] && iabTaxonomyData[taxonomyID].mappings[segment.id]) || unknownIabSegmentId }))
+        .filter(segment => segment.id !== unknownIabSegmentId)
+    }))
 }
 
 /** @type {RtdSubmodule} */
@@ -312,7 +291,7 @@ export const permutiveSubmodule = {
   onAuctionInitEvent: function (auctionDetails, customModuleConfig) {
     makeSafe(function () {
       // Route for bidders supporting ORTB2
-      setBidderRtb(auctionDetails, customModuleConfig)
+      setBidderRtb(auctionDetails, customModuleConfig, window.permutive.iabTaxonomyData || {})
     })
   },
   init: init

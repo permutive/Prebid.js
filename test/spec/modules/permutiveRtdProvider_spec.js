@@ -5,7 +5,8 @@ import {
   initSegments,
   isAcEnabled,
   isPermutiveOnPage,
-  setBidderRtb
+  setBidderRtb,
+  createIabUserData
 } from 'modules/permutiveRtdProvider.js'
 import { deepAccess } from '../../../src/utils.js'
 import { config } from 'src/config.js'
@@ -42,7 +43,7 @@ describe('permutiveRtdProvider', function () {
         return { id: seg }
       })
 
-      setBidderRtb({}, moduleConfig)
+      setBidderRtb({}, moduleConfig, {})
 
       acBidders.forEach(bidder => {
         expect(bidderConfig[bidder].ortb2.user.data).to.deep.include.members([{
@@ -51,7 +52,7 @@ describe('permutiveRtdProvider', function () {
         }])
       })
     })
-    it('should include ortb2 user data transformation for IAB audience taxonomy', function() {
+    it('should include ortb2 user data transformation for IAB audience taxonomies', function() {
       const moduleConfig = getConfig()
       const bidderConfig = config.getBidderConfig()
       const acBidders = moduleConfig.params.acBidders
@@ -61,20 +62,15 @@ describe('permutiveRtdProvider', function () {
 
       Object.assign(
         moduleConfig.params,
-        {
-          transformations: [{
-            id: 'iabAudienceTaxonomy11',
-            config: {
-              iabIds: {
-                1000001: '9000009',
-                1000002: '9000008'
-              }
-            }
-          }]
-        }
+        { iabTaxonomies: [{ id: 4 }] }
       )
 
-      setBidderRtb({}, moduleConfig)
+      setBidderRtb({}, moduleConfig, {
+        4: {
+          1000001: '9000009',
+          1000002: '9000009',
+        }
+      })
 
       acBidders.forEach(bidder => {
         expect(bidderConfig[bidder].ortb2.user.data).to.deep.include.members([
@@ -84,7 +80,7 @@ describe('permutiveRtdProvider', function () {
           },
           {
             name: 'permutive.com',
-            ext: { segtax: '4' },
+            ext: { segtax: 4 },
             segment: [{ id: '9000009' }, { id: '9000008' }]
           }
         ])
@@ -117,15 +113,7 @@ describe('permutiveRtdProvider', function () {
         config: sampleOrtbConfig
       })
 
-      const transformedUserData = {
-        name: 'transformation',
-        ext: { test: true },
-        segment: [1, 2, 3]
-      }
-
-      setBidderRtb({}, moduleConfig, {
-        testTransformation: userData => transformedUserData
-      })
+      setBidderRtb({}, moduleConfig, {})
 
       acBidders.forEach(bidder => {
         expect(bidderConfig[bidder].ortb2.site.name).to.equal(sampleOrtbConfig.ortb2.site.name)
@@ -343,6 +331,47 @@ describe('permutiveRtdProvider', function () {
     it('checks if AC is enabled for Index', function () {
       expect(isAcEnabled({ params: { acBidders: ['ix'] } }, 'ix')).to.equal(true)
       expect(isAcEnabled({ params: { acBidders: ['kjdvb'] } }, 'ix')).to.equal(false)
+    })
+  })
+
+  describe('IAB audience taxonomy transformation', function () {
+    it('creates the correct `user.data` objects', function() {
+      const userData = {
+        name: 'test',
+        segment: [{ id: '1' }, { id: '2' }, { id: '3' }, { id: '999' }]
+      }
+
+      const enabledTaxonomies = [{ id: 4 }, { id: 12345 }]
+
+      const data = {
+        4: {
+          mappings: {
+            '1': 'one',
+            '2': 'two',
+            '3': 'three'
+          }
+        },
+        12345: {
+          mappings: {
+            '999': '000'
+          }
+        }
+      }
+
+      const expected = [
+        {
+          name: 'test',
+          ext: { segtax: 4 },
+          segment: [{ id: 'one' }, { id: 'two' }, { id: 'three' }]
+        },
+        {
+          name: 'test',
+          ext: { segtax: 12345 },
+          segment: [{ id: '000' }]
+        },
+      ]
+
+      expect(createIabUserData(userData, enabledTaxonomies, data)).to.deep.equal(expected)
     })
   })
 })
