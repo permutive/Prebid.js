@@ -73,7 +73,7 @@ export function setBidderRtb (bidderOrtb2, customModuleConfig) {
 
   acBidders.forEach(function (bidder) {
     const currConfig = { ortb2: bidderOrtb2[bidder] || {} }
-    const nextConfig = updateOrtbConfig(currConfig, segmentData.ac, transformationConfigs) // ORTB2 uses the `ac` segment IDs
+    const nextConfig = updateOrtbConfig(currConfig, segmentData, transformationConfigs) // ORTB2 uses the `ac` segment IDs
     bidderOrtb2[bidder] = nextConfig.ortb2;
   })
 }
@@ -81,22 +81,25 @@ export function setBidderRtb (bidderOrtb2, customModuleConfig) {
 /**
  * Updates `user.data` object in existing bidder config with Permutive segments
  * @param {Object} currConfig - Current bidder config
+ * @param {Object} segmentData - Permutive segments
  * @param {Object[]} transformationConfigs - array of objects with `id` and `config` properties, used to determine
  *                                           the transformations on user data to include the ORTB2 object
- * @param {string[]} segmentIDs - Permutive segment IDs
  * @return {Object} Merged ortb2 object
  */
-function updateOrtbConfig (currConfig, segmentIDs, transformationConfigs) {
+function updateOrtbConfig (currConfig, segmentData, transformationConfigs) {
   const name = 'permutive.com'
 
   const permutiveUserData = {
     name,
-    segment: segmentIDs.map(segmentId => ({ id: segmentId })),
+    segment: segmentData.ac.map(segmentId => ({ id: segmentId })),
   }
 
   const transformedUserData = transformationConfigs
     .filter(({ id }) => ortb2UserDataTransformations.hasOwnProperty(id))
-    .map(({ id, config }) => ortb2UserDataTransformations[id](permutiveUserData, config))
+    .map(({ id, config }) => ortb2UserDataTransformations[id]({
+      name,
+      segment: segmentData.transformations.map(segmentId => ({ id: segmentId })),
+    }, config))
 
   const ortbConfig = mergeDeep({}, currConfig)
   const currentUserData = deepAccess(ortbConfig, 'ortb2.user.data') || []
@@ -234,6 +237,7 @@ export function isPermutiveOnPage () {
  */
 export function getSegments (maxSegs) {
   const legacySegs = readSegments('_psegs').map(Number).filter(seg => seg >= 1000000).map(String)
+  const legacySegsUnfiltered = readSegments('_psegs').map(String)
   const _ppam = readSegments('_ppam')
   const _pcrprs = readSegments('_pcrprs')
 
@@ -242,6 +246,7 @@ export function getSegments (maxSegs) {
     rubicon: readSegments('_prubicons'),
     appnexus: readSegments('_papns'),
     gam: readSegments('_pdfps'),
+    transformations: [..._pcrprs, ..._ppam, ...legacySegsUnfiltered],
   }
 
   for (const bidder in segments) {
