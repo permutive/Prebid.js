@@ -113,7 +113,7 @@
   },
   "dependencies": {
     "@babel/core": "^7.16.7",
-    "@babel/preset-env": "^7.16.8",
+    "@babel/preset-env": "^7.22.0",
     "babel-plugin-transform-object-assign": "^6.22.0",
     "core-js": "^3.13.0",
     "core-js-pure": "^3.13.0",
