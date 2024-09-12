@@ -67,6 +67,7 @@ describe('permutiveRtdProvider', function () {
             config: {
               segtax: 4,
               iabIds: {
+                1234: '9000007',
                 1000001: '9000009',
                 1000002: '9000008'
               }
@@ -86,7 +87,7 @@ describe('permutiveRtdProvider', function () {
           {
             name: 'permutive.com',
             ext: { segtax: 4 },
-            segment: [{ id: '9000009' }, { id: '9000008' }]
+            segment: [{ id: '9000007' }, { id: '9000009' }, { id: '9000008' }]
           }
         ])
       })
@@ -374,6 +375,7 @@ function transformedTargeting () {
     appnexus: data._papns,
     rubicon: data._prubicons,
     gam: data._pdfps,
+    transformations: [...data._pcrprs, ...data._ppam, ...data._psegs],
   }
 }
 
