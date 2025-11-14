@@ -48,6 +48,7 @@ describe('permutiveRtdProvider', function () {
       params: {
         maxSegs: 500,
         acBidders: [],
+        ccBidders: [],
         overwrites: {},
       },
     })
@@ -200,7 +201,7 @@ describe('permutiveRtdProvider', function () {
       setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
       acBidders.forEach(bidder => {
-        const customCohorts = segmentsData[bidder] || []
+        const customCohorts = segmentsData.customCohorts || []
         expect(bidderConfig[bidder].user.data).to.deep.include.members([
           {
             name: 'permutive.com',
@@ -267,7 +268,7 @@ describe('permutiveRtdProvider', function () {
       setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
       acBidders.forEach(bidder => {
-        const customCohorts = segmentsData[bidder] || []
+        const customCohorts = segmentsData.customCohorts || []
 
         expect(bidderConfig[bidder].user.data).to.not.deep.include.members([...sampleOrtbConfig.user.data])
         expect(bidderConfig[bidder].user.data).to.deep.include.members([
@@ -391,7 +392,7 @@ describe('permutiveRtdProvider', function () {
       setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
       acBidders.forEach(bidder => {
-        const customCohortsData = segmentsData[bidder] || []
+        const customCohortsData = segmentsData.customCohorts || []
         const keywordGroups = {
           [PERMUTIVE_STANDARD_KEYWORD]: segmentsData.ac,
           [PERMUTIVE_STANDARD_AUD_KEYWORD]: segmentsData.ssp.cohorts,
@@ -443,7 +444,7 @@ describe('permutiveRtdProvider', function () {
       setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
       acBidders.forEach(bidder => {
-        const customCohortsData = segmentsData[bidder] || []
+        const customCohortsData = segmentsData.customCohorts || []
 
         const expectedKeywords = [
           ...existingKeywords,
@@ -556,7 +557,7 @@ describe('permutiveRtdProvider', function () {
             p_standard: segmentsData.ac,
           }
 
-          const customCohorts = segmentsData[bidder] || []
+          const customCohorts = segmentsData.customCohorts || []
           if (customCohorts.length > 0) {
             deepSetValue(userExtData, 'permutive', customCohorts)
           }
@@ -572,10 +573,8 @@ describe('permutiveRtdProvider', function () {
         const bidderConfig = {}
 
         const segmentsData = transformedTargeting()
-        moduleConfig.params.acBidders.forEach((bidder) => {
-          // Remove custom cohorts
-          delete segmentsData[bidder]
-        })
+        // Remove custom cohorts by setting to empty array
+        segmentsData.customCohorts = []
 
         setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
@@ -598,7 +597,7 @@ describe('permutiveRtdProvider', function () {
         setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
         moduleConfig.params.acBidders.forEach(bidder => {
-          const customCohorts = segmentsData[bidder] || []
+          const customCohorts = segmentsData.customCohorts || []
           if (customCohorts.length > 0) {
             expect(bidderConfig[bidder].user.ext.data).to.deep
               .eq({ permutive: customCohorts })
@@ -634,21 +633,35 @@ describe('permutiveRtdProvider', function () {
     })
 
     it('should coerce numbers to strings', function () {
-      setLocalStorage({ _prubicons: [1, 2, 3], _pssps: { ssps: ['foo', 'bar'], cohorts: [4, 5, 6] } })
+      setLocalStorage({
+        _prubicons: [1, 2, 3],
+        _pssps: { ssps: ['foo', 'bar'], cohorts: [4, 5, 6] },
+        // Clear other custom cohort keys
+        _pdfps: [],
+        _papns: [],
+        _pindexs: []
+      })
 
       const segments = getSegments(200)
 
-      expect(segments.rubicon).to.deep.equal(['1', '2', '3'])
+      expect(segments.customCohorts).to.deep.equal(['1', '2', '3'])
       expect(segments.ssp.ssps).to.deep.equal(['foo', 'bar'])
       expect(segments.ssp.cohorts).to.deep.equal(['4', '5', '6'])
     })
 
     it('should return empty values on unexpected format', function () {
-      setLocalStorage({ _prubicons: 'a string instead?', _pssps: 123 })
+      setLocalStorage({
+        _prubicons: 'a string instead?',
+        _pssps: 123,
+        // Clear other custom cohort keys
+        _pdfps: [],
+        _papns: [],
+        _pindexs: []
+      })
 
       const segments = getSegments(200)
 
-      expect(segments.rubicon).to.deep.equal([])
+      expect(segments.customCohorts).to.deep.equal([])
       expect(segments.ssp.ssps).to.deep.equal([])
       expect(segments.ssp.cohorts).to.deep.equal([])
     })
@@ -765,6 +778,7 @@ function getConfig () {
     waitForIt: true,
     params: {
       acBidders: ['appnexus', 'rubicon', 'ozone', 'trustx', 'ix'],
+      ccBidders: ['appnexus', 'rubicon', 'ozone', 'trustx', 'ix'],  // Same as acBidders so tests receive custom cohorts
       maxSegs: 500
     }
   }
@@ -779,12 +793,19 @@ function transformedTargeting (data = getTargetingData()) {
     return topics
   })()
 
+  // Merge all custom cohorts (from _pprebid + legacy keys)
+  const pprebid = data._pprebid || []
+  const customCohorts = [...new Set([
+    ...pprebid,
+    ...data._papns,
+    ...data._prubicons,
+    ...data._pindexs,
+    ...data._pdfps
+  ])].map(String)
+
   return {
     ac: [...data._pcrprs, ...data._psegs.filter(seg => seg >= 1000000)].map(String),
-    appnexus: data._papns.map(String),
-    ix: data._pindexs.map(String),
-    rubicon: data._prubicons.map(String),
-    gam: data._pdfps.map(String),
+    customCohorts: customCohorts,
     ssp: {
       ssps: data._pssps.ssps.map(String),
       cohorts: data._pssps.cohorts.map(String)
