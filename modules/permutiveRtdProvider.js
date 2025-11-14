@@ -5,6 +5,62 @@
  * @module modules/permutiveRtdProvider
  * @requires module:modules/realTimeData
  */
+
+/**
+ * LOCAL STORAGE KEYS READ BY THIS MODULE:
+ *
+ * Cohort Data:
+ * - _psegs: Raw Permutive segments (filtered to >= 1000000 for Standard Cohorts)
+ * - _pcrprs: Data Clean Room (DCR) cohorts from privacy-enhanced partnerships
+ * - _pssps: { ssps: ['bidder1', ...], cohorts: [...] } - SSP signals and recipient SSP bidder codes
+ * - _papns: AppNexus/Xandr-specific custom cohorts
+ * - _prubicons: Rubicon/Magnite-specific custom cohorts
+ * - _pindexs: Index Exchange-specific custom cohorts
+ * - _pdfps: Google Ad Manager-specific custom cohorts
+ * - _ppsts: Privacy Sandbox Topics, keyed by IAB taxonomy version (e.g., { '600': [...], '601': [...] })
+ *
+ * Configuration:
+ * - permutive-prebid-rtd: Module configuration set by Permutive SDK
+ *
+ * SIGNAL TYPES & DISTRIBUTION:
+ *
+ * AC Signals (Standard Cohorts + DCR Cohorts):
+ *   - Sent to: AC Bidders (configured via params.acBidders)
+ *   - Source: _psegs (>= 1000000) + _pcrprs
+ *   - Cohort types: Standard Cohorts, DCR Cohorts
+ *
+ * SSP Signals (Curation Signals):
+ *   - Sent to: SSP Bidders (list provided in _pssps.ssps)
+ *   - Source: _pssps.cohorts
+ *   - Cohort types: Curated mix of DCR, Standard, and Curated cohorts
+ *
+ * Bidders that are BOTH AC and SSP:
+ *   - Receive: AC Signals + SSP Signals (merged and deduped)
+ *
+ * Custom Cohorts (bidder-specific):
+ *   - Sent to: Specific bidder only
+ *   - Source: Bidder-specific keys (_papns, _prubicons, _pindexs, _pdfps)
+ *
+ * ORTB2 LOCATIONS & SIGNAL MAPPING:
+ *
+ * ortb2.user.data[] (array of provider objects):
+ *   - Provider "permutive.com": AC Signals or AC+SSP Signals merged
+ *   - Provider "permutive": Bidder-specific custom cohorts
+ *   - Provider "permutive.com" with segtax: Privacy Sandbox Topics (per taxonomy)
+ *
+ * ortb2.user.keywords (comma-separated key=value pairs):
+ *   - p_standard=<id>: AC Signals or AC+SSP Signals merged
+ *   - p_standard_aud=<id>: SSP Signals only
+ *   - permutive=<id>: Bidder-specific custom cohorts
+ *
+ * ortb2.user.ext.data (first-party data extensions):
+ *   - p_standard: AC Signals or AC+SSP Signals merged
+ *   - permutive: Bidder-specific custom cohorts
+ *
+ * ortb2.site.ext.permutive (site-level extensions):
+ *   - p_standard: AC Signals or AC+SSP Signals merged
+ */
+
 import {getGlobal} from '../src/prebidGlobal.js';
 import {submodule} from '../src/hook.js';
 import {getStorageManager} from '../src/storageManager.js';
@@ -104,67 +160,109 @@ export function setBidderRtb (bidderOrtb2, moduleConfig, segmentData) {
   const maxSegs = deepAccess(moduleConfig, 'params.maxSegs')
   const transformationConfigs = deepAccess(moduleConfig, 'params.transformations') || []
 
-  const ssps = segmentData?.ssp?.ssps ?? []
-  const sspCohorts = segmentData?.ssp?.cohorts ?? []
+  // AC Signals: Standard Cohorts + DCR Cohorts
+  const acSignals = segmentData?.ac ?? []
+
+  // SSP Signals: Curation signals (curated mix of DCR, Standard, and Curated cohorts)
+  const sspBidderCodes = segmentData?.ssp?.ssps ?? []
+  const sspSignals = segmentData?.ssp?.cohorts ?? []
+
   const topics = segmentData?.topics ?? {}
 
-  const bidders = new Set([...acBidders, ...ssps])
+  // Process all bidders (union of AC bidders and SSP bidders)
+  const bidders = new Set([...acBidders, ...sspBidderCodes])
   bidders.forEach(function (bidder) {
     const currConfig = { ortb2: bidderOrtb2[bidder] || {} }
 
-    let cohorts = []
-
+    // Determine which signals this bidder should receive
     const isAcBidder = acBidders.indexOf(bidder) > -1
+    const isSspBidder = sspBidderCodes.indexOf(bidder) > -1
+
+    let signalsForBidder = []
+
     if (isAcBidder) {
-      cohorts = segmentData.ac
+      // AC Bidders receive AC Signals (Standard + DCR cohorts)
+      signalsForBidder = acSignals
     }
 
-    const isSspBidder = ssps.indexOf(bidder) > -1
     if (isSspBidder) {
-      cohorts = [...new Set([...cohorts, ...sspCohorts])].slice(0, maxSegs)
+      // SSP Bidders receive SSP Signals (may also include AC Signals if bidder is both AC and SSP)
+      signalsForBidder = [...new Set([...signalsForBidder, ...sspSignals])].slice(0, maxSegs)
     }
 
-    const nextConfig = updateOrtbConfig(bidder, currConfig, cohorts, sspCohorts, topics, transformationConfigs, segmentData)
+    const nextConfig = updateOrtbConfig(
+      bidder,
+      currConfig,
+      signalsForBidder,     // Merged signals for this bidder (AC only, SSP only, or AC+SSP)
+      sspSignals,           // SSP Signals (for p_standard_aud keyword)
+      topics,
+      transformationConfigs,
+      segmentData
+    )
     bidderOrtb2[bidder] = nextConfig.ortb2
   })
 }
 
 /**
- * Updates `user.data` object in existing bidder config with Permutive segments
+ * Updates ORTB2 config for a bidder with Permutive cohorts across multiple locations:
+ *
+ * ortb2.user.data[] providers:
+ * - "permutive.com": Contains AC Signals (Standard + DCR cohorts) or AC+SSP Signals merged
+ * - "permutive": Contains bidder-specific custom cohorts
+ * - "permutive.com" with segtax: Contains Privacy Sandbox Topics (per taxonomy version)
+ *
+ * ortb2.user.keywords:
+ * - p_standard=<id>: AC Signals or AC+SSP Signals merged
+ * - p_standard_aud=<id>: SSP Signals only (curation signals)
+ * - permutive=<id>: Bidder-specific custom cohorts
+ *
+ * ortb2.user.ext.data:
+ * - p_standard: AC Signals or AC+SSP Signals merged
+ * - permutive: Bidder-specific custom cohorts
+ *
+ * ortb2.site.ext.permutive:
+ * - p_standard: AC Signals or AC+SSP Signals merged
+ *
  * @param {string} bidder - The bidder identifier
  * @param {Object} currConfig - Current bidder config
- * @param {string[]} segmentIDs - Permutive segment IDs
- * @param {string[]} sspSegmentIDs - Permutive SSP segment IDs
+ * @param {string[]} mergedSignalIds - Combined signals for this bidder (AC, SSP, or AC+SSP merged)
+ * @param {string[]} sspSignalIds - SSP Signals (curation signal IDs, used only for p_standard_aud keywords)
  * @param {Object} topics - Privacy Sandbox Topics, keyed by IAB taxonomy version (600, 601, etc.)
- * @param {Object[]} transformationConfigs - array of objects with `id` and `config` properties, used to determine
- *                                           the transformations on user data to include the ORTB2 object
- * @param {Object} segmentData - The segments available for targeting
- * @return {Object} Merged ortb2 object
+ * @param {Object[]} transformationConfigs - Array of transformation configs (e.g., IAB taxonomy mappings)
+ * @param {Object} segmentData - All segment data (includes bidder-specific custom cohorts)
+ * @return {Object} Updated ortb2 config object
  */
-function updateOrtbConfig(bidder, currConfig, segmentIDs, sspSegmentIDs, topics, transformationConfigs, segmentData) {
+function updateOrtbConfig(bidder, currConfig, mergedSignalIds, sspSignalIds, topics, transformationConfigs, segmentData) {
   logger.logInfo(`Current ortb2 config`, { bidder, config: currConfig })
 
-  const customCohortsData = deepAccess(segmentData, bidder) || []
+  // Get bidder-specific custom cohorts (e.g., _papns for AppNexus, _prubicons for Rubicon)
+  const bidderCustomCohorts = deepAccess(segmentData, bidder) || []
 
   const name = 'permutive.com'
 
+  // === ORTB2.USER.DATA[] SETUP ===
+
+  // 1. "permutive.com" provider: AC Signals or AC+SSP Signals merged
+  //    Contains: Standard Cohorts + DCR Cohorts (+ Curation Signals if bidder is both AC and SSP)
   const permutiveUserData = {
     name,
-    segment: segmentIDs.map(segmentId => ({ id: segmentId })),
+    segment: mergedSignalIds.map(segmentId => ({ id: segmentId })),
   }
 
+  // 2. Optional IAB taxonomy transformations on AC/SSP signals
   const transformedUserData = transformationConfigs
     .filter(({ id }) => ortb2UserDataTransformations.hasOwnProperty(id))
     .map(({ id, config }) => ortb2UserDataTransformations[id](permutiveUserData, config))
 
+  // 3. "permutive" provider: Bidder-specific custom cohorts
+  //    Contains: Custom cohorts from bidder-specific local storage keys
   const customCohortsUserData = {
     name: PERMUTIVE_CUSTOM_COHORTS_KEYWORD,
-    segment: customCohortsData.map(cohortID => ({ id: cohortID })),
+    segment: bidderCustomCohorts.map(cohortID => ({ id: cohortID })),
   }
 
-  const ortbConfig = mergeDeep({}, currConfig)
-  const currentUserData = deepAccess(ortbConfig, 'ortb2.user.data') || []
-
+  // 4. "permutive.com" provider with segtax: Privacy Sandbox Topics (one entry per taxonomy version)
+  //    Contains: Google Topics API signals
   const topicsUserData = []
   for (const [k, value] of Object.entries(topics)) {
     topicsUserData.push({
@@ -176,6 +274,9 @@ function updateOrtbConfig(bidder, currConfig, segmentIDs, sspSegmentIDs, topics,
     })
   }
 
+  // Merge all user.data[] entries, removing old Permutive entries first
+  const ortbConfig = mergeDeep({}, currConfig)
+  const currentUserData = deepAccess(ortbConfig, 'ortb2.user.data') || []
   const updatedUserData = currentUserData
     .filter(el => el.name !== permutiveUserData.name && el.name !== customCohortsUserData.name)
     .concat(permutiveUserData, transformedUserData, customCohortsUserData)
@@ -184,16 +285,17 @@ function updateOrtbConfig(bidder, currConfig, segmentIDs, sspSegmentIDs, topics,
   logger.logInfo(`Updating ortb2.user.data`, { bidder, user_data: updatedUserData })
   deepSetValue(ortbConfig, 'ortb2.user.data', updatedUserData)
 
-  // Set ortb2.user.keywords
+  // === ORTB2.USER.KEYWORDS SETUP ===
+
   const currentKeywords = deepAccess(ortbConfig, 'ortb2.user.keywords')
   const keywordGroups = {
-    [PERMUTIVE_STANDARD_KEYWORD]: segmentIDs,
-    [PERMUTIVE_STANDARD_AUD_KEYWORD]: sspSegmentIDs,
-    [PERMUTIVE_CUSTOM_COHORTS_KEYWORD]: customCohortsData,
+    [PERMUTIVE_STANDARD_KEYWORD]: mergedSignalIds,          // p_standard: AC Signals or AC+SSP Signals merged
+    [PERMUTIVE_STANDARD_AUD_KEYWORD]: sspSignalIds,         // p_standard_aud: SSP Signals only
+    [PERMUTIVE_CUSTOM_COHORTS_KEYWORD]: bidderCustomCohorts, // permutive: Bidder-specific custom cohorts
   }
 
   // Transform groups of key-values into a single array of strings
-  // i.e { permutive: ['1', '2'], p_standard: ['3', '4'] } => ['permutive=1', 'permutive=2', 'p_standard=3',' p_standard=4']
+  // i.e { permutive: ['1', '2'], p_standard: ['3', '4'] } => ['permutive=1', 'permutive=2', 'p_standard=3', 'p_standard=4']
   const transformedKeywordGroups = Object.entries(keywordGroups)
     .flatMap(([keyword, ids]) => ids.map(id => `${keyword}=${id}`))
 
@@ -210,21 +312,26 @@ function updateOrtbConfig(bidder, currConfig, segmentIDs, sspSegmentIDs, topics,
   })
   deepSetValue(ortbConfig, 'ortb2.user.keywords', keywords)
 
-  // Set user extensions
-  if (segmentIDs.length > 0) {
-    deepSetValue(ortbConfig, `ortb2.user.ext.data.${PERMUTIVE_STANDARD_KEYWORD}`, segmentIDs)
-    logger.logInfo(`Extending ortb2.user.ext.data with "${PERMUTIVE_STANDARD_KEYWORD}"`, segmentIDs)
+  // === ORTB2.USER.EXT.DATA SETUP ===
+
+  // Set p_standard: AC Signals or AC+SSP Signals merged
+  if (mergedSignalIds.length > 0) {
+    deepSetValue(ortbConfig, `ortb2.user.ext.data.${PERMUTIVE_STANDARD_KEYWORD}`, mergedSignalIds)
+    logger.logInfo(`Extending ortb2.user.ext.data with "${PERMUTIVE_STANDARD_KEYWORD}"`, mergedSignalIds)
   }
 
-  if (customCohortsData.length > 0) {
-    deepSetValue(ortbConfig, `ortb2.user.ext.data.${PERMUTIVE_CUSTOM_COHORTS_KEYWORD}`, customCohortsData.map(String))
-    logger.logInfo(`Extending ortb2.user.ext.data with "${PERMUTIVE_CUSTOM_COHORTS_KEYWORD}"`, customCohortsData)
+  // Set permutive: Bidder-specific custom cohorts
+  if (bidderCustomCohorts.length > 0) {
+    deepSetValue(ortbConfig, `ortb2.user.ext.data.${PERMUTIVE_CUSTOM_COHORTS_KEYWORD}`, bidderCustomCohorts.map(String))
+    logger.logInfo(`Extending ortb2.user.ext.data with "${PERMUTIVE_CUSTOM_COHORTS_KEYWORD}"`, bidderCustomCohorts)
   }
 
-  // Set site extensions
-  if (segmentIDs.length > 0) {
-    deepSetValue(ortbConfig, `ortb2.site.ext.permutive.${PERMUTIVE_STANDARD_KEYWORD}`, segmentIDs)
-    logger.logInfo(`Extending ortb2.site.ext.permutive with "${PERMUTIVE_STANDARD_KEYWORD}"`, segmentIDs)
+  // === ORTB2.SITE.EXT.PERMUTIVE SETUP ===
+
+  // Set p_standard: AC Signals or AC+SSP Signals merged at site level
+  if (mergedSignalIds.length > 0) {
+    deepSetValue(ortbConfig, `ortb2.site.ext.permutive.${PERMUTIVE_STANDARD_KEYWORD}`, mergedSignalIds)
+    logger.logInfo(`Extending ortb2.site.ext.permutive with "${PERMUTIVE_STANDARD_KEYWORD}"`, mergedSignalIds)
   }
 
   logger.logInfo(`Updated ortb2 config`, { bidder, config: ortbConfig })
@@ -308,54 +415,70 @@ export function isPermutiveOnPage () {
 }
 
 /**
- * Get all relevant segment IDs in an object
- * @param {number} maxSegs - Maximum number of segments to be included
- * @return {Object}
+ * Reads cohort data from local storage keys written by the Permutive SDK.
+ * Returns segment data organized by signal type (AC, SSP) and bidder-specific custom cohorts.
+ *
+ * @param {number} maxSegs - Maximum number of segments per cohort type
+ * @return {Object} Segment data with AC signals, SSP signals, custom cohorts, and topics
  */
 export function getSegments(maxSegs) {
   const segments = {
+    // AC Signals: Standard Cohorts + DCR Cohorts
+    // Sent to AC Bidders via p_standard keyword and ortb2.user.data "permutive.com" provider
     ac:
       makeSafe(() => {
-        const legacySegs =
+        // Standard Cohorts: Permutive's core audience segments (_psegs >= 1000000)
+        const standardCohorts =
           makeSafe(() =>
             readSegments('_psegs', [])
               .map(Number)
-              .filter((seg) => seg >= 1000000)
+              .filter((seg) => seg >= 1000000)  // Filter to only Standard Cohorts
               .map(String),
           ) || [];
-        const _pcrprs = makeSafe(() => readSegments('_pcrprs', []).map(String)) || [];
 
-        return [..._pcrprs, ...legacySegs];
+        // DCR Cohorts: Data Clean Room cohorts from privacy-enhanced partnerships (_pcrprs)
+        const dcrCohorts = makeSafe(() => readSegments('_pcrprs', []).map(String)) || [];
+
+        return [...dcrCohorts, ...standardCohorts];
       }) || [],
 
+    // Bidder-specific custom cohorts (sent via "permutive" provider in ortb2.user.data)
+
+    // Index Exchange custom cohorts (_pindexs)
     ix:
       makeSafe(() => {
         const _pindexs = readSegments('_pindexs', []);
         return _pindexs.map(String);
       }) || [],
 
+    // Rubicon/Magnite custom cohorts (_prubicons)
     rubicon:
       makeSafe(() => {
         const _prubicons = readSegments('_prubicons', []);
         return _prubicons.map(String);
       }) || [],
 
+    // AppNexus/Xandr custom cohorts (_papns)
     appnexus:
       makeSafe(() => {
         const _papns = readSegments('_papns', []);
         return _papns.map(String);
       }) || [],
 
+    // Google Ad Manager custom cohorts (_pdfps)
     gam:
       makeSafe(() => {
         const _pdfps = readSegments('_pdfps', []);
         return _pdfps.map(String);
       }) || [],
 
+    // SSP Signals: Curation signals (curated mix of DCR, Standard, and Curated cohorts)
+    // Sent to SSP Bidders via p_standard_aud keyword
+    // Includes both the signal IDs and the list of SSP bidder codes that should receive them
     ssp: makeSafe(() => {
       const _pssps = readSegments('_pssps', {
-        cohorts: [],
-        ssps: [],
+        cohorts: [],  // SSP Signal IDs (curation signals)
+        ssps: [],     // SSP bidder codes
       });
 
       return {
@@ -364,6 +487,8 @@ export function getSegments(maxSegs) {
       };
     }),
 
+    // Privacy Sandbox Topics: Google Topics API signals, keyed by IAB taxonomy version
+    // Sent to all bidders via "permutive.com" provider with segtax in ortb2.user.data
     topics:
       makeSafe(() => {
         const _ppsts = readSegments('_ppsts', {});
