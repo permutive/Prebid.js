@@ -118,8 +118,8 @@ export function getModuleConfig(customModuleConfig) {
 }
 
 /**
- * Sets ortb2 config for ac bidders
- * @param {Object} bidderOrtb2 - The ortb2 object for the all bidders
+ * Sets ortb2 config for bidders with Permutive signals
+ * @param {Object} bidderOrtb2 - The ortb2 object for all bidders
  * @param {Object} moduleConfig - Publisher config for module
  * @param {Object} segmentData - Segment data grouped by bidder or type
  */
@@ -132,7 +132,7 @@ export function setBidderRtb (bidderOrtb2, moduleConfig, segmentData) {
   const sspBidders = segmentData?.ssp?.ssps ?? []
   const sspSignals = segmentData?.ssp?.cohorts ?? []
   const topics = segmentData?.topics ?? {}
-  const customCohorts = segmentData?.customCohorts ?? []
+  const ccSignals = segmentData?.customCohorts ?? []
 
   const ccBidders = deepAccess(moduleConfig, 'params.ccBidders') || []
   const legacyCcBidders = ['ix', 'rubicon', 'appnexus', 'gam']
@@ -151,7 +151,7 @@ export function setBidderRtb (bidderOrtb2, moduleConfig, segmentData) {
       currConfig,
       isAcBidder ? acSignals : [],
       isSspBidder ? sspSignals : [],
-      isCcBidder ? customCohorts : [],
+      isCcBidder ? ccSignals : [],
       topics,
       transformationConfigs,
       maxSegs
