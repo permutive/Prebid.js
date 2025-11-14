@@ -323,10 +323,9 @@ export function getSegments(maxSegs) {
               .filter((seg) => seg >= 1000000)
               .map(String),
           ) || [];
-        const _ppam = makeSafe(() => readSegments('_ppam', []).map(String)) || [];
         const _pcrprs = makeSafe(() => readSegments('_pcrprs', []).map(String)) || [];
 
-        return [..._pcrprs, ..._ppam, ...legacySegs];
+        return [..._pcrprs, ...legacySegs];
       }) || [],
 
     ix:

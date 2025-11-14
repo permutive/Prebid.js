@@ -459,7 +459,6 @@ describe('permutiveRtdProvider', function () {
     it('should merge ortb2 correctly for ac and ssps', function () {
       const customTargetingData = {
         ...getTargetingData(),
-        '_ppam': [],
         '_psegs': [],
         '_pcrprs': ['abc', 'def', 'xyz'],
         '_pssps': {
@@ -529,7 +528,6 @@ describe('permutiveRtdProvider', function () {
           _prubicons: [],
           _papns: [],
           _psegs: [],
-          _ppam: [],
           _pcrprs: [],
           _pindexs: [],
           _pssps: { ssps: [], cohorts: [] },
@@ -782,7 +780,7 @@ function transformedTargeting (data = getTargetingData()) {
   })()
 
   return {
-    ac: [...data._pcrprs, ...data._ppam, ...data._psegs.filter(seg => seg >= 1000000)].map(String),
+    ac: [...data._pcrprs, ...data._psegs.filter(seg => seg >= 1000000)].map(String),
     appnexus: data._papns.map(String),
     ix: data._pindexs.map(String),
     rubicon: data._prubicons.map(String),
@@ -801,7 +799,6 @@ function getTargetingData () {
     _prubicons: ['rubicon1', 'rubicon2'],
     _papns: ['appnexus1', 'appnexus2'],
     _psegs: ['1234', '1000001', '1000002'],
-    _ppam: ['ppam1', 'ppam2'],
     _pindexs: ['pindex1', 'pindex2'],
     _pcrprs: ['pcrprs1', 'pcrprs2', 'dup'],
     _pssps: { ssps: ['xyz', 'abc', 'dup'], cohorts: ['123', 'abc'] },
