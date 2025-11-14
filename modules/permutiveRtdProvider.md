@@ -46,6 +46,7 @@ as well as enabling settings for specific use cases mentioned above (e.g. acbidd
 | waitForIt              | Boolean              | Should be `true` if there's an `auctionDelay` defined (optional)                              | `false`            |
 | params                 | Object               |                                                                                               | -                  |
 | params.acBidders       | String[]             | An array of bidder codes to share cohorts with in certain versions of Prebid, see below       | `[]`               |
+| params.ccBidders       | String[]             | An array of bidder codes to receive custom cohorts, see Custom Cohorts section below          | `[]`               |
 | params.maxSegs         | Integer              | Maximum number of cohorts to be included in either the `permutive` or `p_standard` key-value. | `500`              |
 
 #### Context
@@ -100,17 +101,30 @@ For Equativ: Please ensure you are using Prebid.js 7.26 (or later)
 
 #### Custom Cohorts
 
-The Permutive RTD module also supports passing any of the **Custom** Cohorts created in the dashboard to some SSP partners for targeting
-e.g. setting up publisher deals. For these activations, cohort IDs are set in bidder-specific locations per ad unit (custom parameters).
+The Permutive RTD module supports passing **Custom Cohorts** created in the dashboard to specified bidders for targeting (e.g., setting up publisher deals).
 
-Currently, bidders with known support for custom cohort targeting are:
+To enable custom cohorts, add bidder codes to the `ccBidders` parameter:
 
-- Xandr
-- Magnite
+```javascript
+pbjs.setConfig({
+  realTimeData: {
+    dataProviders: [{
+      name: 'permutive',
+      params: {
+        ccBidders: ['appnexus', 'rubicon', 'ozone']
+      }
+    }]
+  }
+})
+```
 
-When enabling the respective Activation for a cohort in Permutive, this module will automatically attach that cohort ID to the bid request.
-There is no need to enable individual bidders in the module configuration, it will automatically reflect which SSP integrations you have enabled in your Permutive dashboard.
-Permutive cohorts will be sent in the permutive key-value.
+**Note:** The following bidders automatically receive custom cohorts for backwards compatibility, even if not included in `ccBidders`:
+- Index Exchange (`ix`)
+- Rubicon/Magnite (`rubicon`)
+- AppNexus/Xandr (`appnexus`)
+- Google Ad Manager (`gam`)
+
+Custom cohorts are read from the `_pprebid` local storage key (set by the Permutive SDK) and are sent to all target bidders in the `permutive` key-value.
 
 
 ### _Enabling Advertiser Cohorts_

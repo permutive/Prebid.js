@@ -5,6 +5,29 @@
  * @module modules/permutiveRtdProvider
  * @requires module:modules/realTimeData
  */
+
+/**
+ * LOCAL STORAGE KEYS:
+ * - _psegs: Raw Permutive segments (filtered to >= 1000000 for Standard Cohorts)
+ * - _pcrprs: Data Clean Room (DCR) cohorts
+ * - _pssps: { ssps: [...], cohorts: [...] } - SSP signals and bidder codes
+ * - _pprebid: Custom cohorts
+ * - _papns, _prubicons, _pindexs, _pdfps: Legacy custom cohorts (merged with _pprebid)
+ * - _ppsts: Privacy Sandbox Topics by taxonomy version
+ *
+ * SIGNAL TYPES:
+ * - AC Signals: Standard Cohorts + DCR Cohorts → AC bidders (params.acBidders)
+ * - SSP Signals: Curation signals → SSP bidders (from _pssps.ssps)
+ * - CC Signals: Custom cohorts → CC bidders (params.ccBidders) + legacy bidders (ix, rubicon, appnexus, gam)
+ * - Topics: Privacy Sandbox Topics → All bidders
+ *
+ * ORTB2 LOCATIONS:
+ * - ortb2.user.data "permutive.com": AC/SSP Signals
+ * - ortb2.user.data "permutive": CC Signals
+ * - ortb2.user.keywords: p_standard, p_standard_aud, permutive
+ * - ortb2.user.ext.data: p_standard, permutive
+ */
+
 import {getGlobal} from '../src/prebidGlobal.js';
 import {submodule} from '../src/hook.js';
 import {getStorageManager} from '../src/storageManager.js';
@@ -85,6 +108,7 @@ export function getModuleConfig(customModuleConfig) {
     params: {
       maxSegs: 500,
       acBidders: [],
+      ccBidders: [],
       overwrites: {},
     },
   },
@@ -94,8 +118,8 @@ export function getModuleConfig(customModuleConfig) {
 }
 
 /**
- * Sets ortb2 config for ac bidders
- * @param {Object} bidderOrtb2 - The ortb2 object for the all bidders
+ * Sets ortb2 config for bidders with Permutive signals
+ * @param {Object} bidderOrtb2 - The ortb2 object for all bidders
  * @param {Object} moduleConfig - Publisher config for module
  * @param {Object} segmentData - Segment data grouped by bidder or type
  */
@@ -104,66 +128,71 @@ export function setBidderRtb (bidderOrtb2, moduleConfig, segmentData) {
   const maxSegs = deepAccess(moduleConfig, 'params.maxSegs')
   const transformationConfigs = deepAccess(moduleConfig, 'params.transformations') || []
 
-  const ssps = segmentData?.ssp?.ssps ?? []
-  const sspCohorts = segmentData?.ssp?.cohorts ?? []
+  const acSignals = segmentData?.ac ?? []
+  const sspBidders = segmentData?.ssp?.ssps ?? []
+  const sspSignals = segmentData?.ssp?.cohorts ?? []
   const topics = segmentData?.topics ?? {}
+  const ccSignals = segmentData?.customCohorts ?? []
 
-  const bidders = new Set([...acBidders, ...ssps])
+  const ccBidders = deepAccess(moduleConfig, 'params.ccBidders') || []
+  const legacyCcBidders = ['ix', 'rubicon', 'appnexus', 'gam']
+
+  const bidders = new Set([...acBidders, ...sspBidders, ...ccBidders, ...legacyCcBidders])
+
   bidders.forEach(function (bidder) {
     const currConfig = { ortb2: bidderOrtb2[bidder] || {} }
 
-    let cohorts = []
-
     const isAcBidder = acBidders.indexOf(bidder) > -1
-    if (isAcBidder) {
-      cohorts = segmentData.ac
-    }
+    const isSspBidder = sspBidders.indexOf(bidder) > -1
+    const isCcBidder = ccBidders.indexOf(bidder) > -1 || legacyCcBidders.indexOf(bidder) > -1
 
-    const isSspBidder = ssps.indexOf(bidder) > -1
-    if (isSspBidder) {
-      cohorts = [...new Set([...cohorts, ...sspCohorts])].slice(0, maxSegs)
-    }
-
-    const nextConfig = updateOrtbConfig(bidder, currConfig, cohorts, sspCohorts, topics, transformationConfigs, segmentData)
+    const nextConfig = updateOrtbConfig(
+      bidder,
+      currConfig,
+      isAcBidder ? acSignals : [],
+      isSspBidder ? sspSignals : [],
+      isCcBidder ? ccSignals : [],
+      topics,
+      transformationConfigs,
+      maxSegs
+    )
     bidderOrtb2[bidder] = nextConfig.ortb2
   })
 }
 
 /**
- * Updates `user.data` object in existing bidder config with Permutive segments
- * @param {string} bidder - The bidder identifier
- * @param {Object} currConfig - Current bidder config
- * @param {string[]} segmentIDs - Permutive segment IDs
- * @param {string[]} sspSegmentIDs - Permutive SSP segment IDs
- * @param {Object} topics - Privacy Sandbox Topics, keyed by IAB taxonomy version (600, 601, etc.)
- * @param {Object[]} transformationConfigs - array of objects with `id` and `config` properties, used to determine
- *                                           the transformations on user data to include the ORTB2 object
- * @param {Object} segmentData - The segments available for targeting
- * @return {Object} Merged ortb2 object
+ * Updates ORTB2 config for a bidder with Permutive signals
+ * @param {string} bidder
+ * @param {Object} currConfig
+ * @param {string[]} acSignals - AC Signals for this bidder
+ * @param {string[]} sspSignals - SSP Signals for this bidder
+ * @param {string[]} ccSignals - CC Signals for this bidder
+ * @param {Object} topics - Privacy Sandbox Topics
+ * @param {Object[]} transformationConfigs - IAB taxonomy transformations
+ * @param {number} maxSegs - Maximum segments per signal type
+ * @return {Object} Updated ortb2 config
  */
-function updateOrtbConfig(bidder, currConfig, segmentIDs, sspSegmentIDs, topics, transformationConfigs, segmentData) {
+function updateOrtbConfig(bidder, currConfig, acSignals, sspSignals, ccSignals, topics, transformationConfigs, maxSegs) {
   logger.logInfo(`Current ortb2 config`, { bidder, config: currConfig })
 
-  const customCohortsData = deepAccess(segmentData, bidder) || []
+  // Merge AC + SSP signals for p_standard and permutive.com provider
+  const mergedSignals = [...new Set([...acSignals, ...sspSignals])].slice(0, maxSegs)
 
   const name = 'permutive.com'
 
   const permutiveUserData = {
     name,
-    segment: segmentIDs.map(segmentId => ({ id: segmentId })),
+    segment: mergedSignals.map(segmentId => ({ id: segmentId })),
   }
 
   const transformedUserData = transformationConfigs
     .filter(({ id }) => ortb2UserDataTransformations.hasOwnProperty(id))
     .map(({ id, config }) => ortb2UserDataTransformations[id](permutiveUserData, config))
 
-  const customCohortsUserData = {
+  const ccUserData = {
     name: PERMUTIVE_CUSTOM_COHORTS_KEYWORD,
-    segment: customCohortsData.map(cohortID => ({ id: cohortID })),
+    segment: ccSignals.map(cohortID => ({ id: cohortID })),
   }
-
-  const ortbConfig = mergeDeep({}, currConfig)
-  const currentUserData = deepAccess(ortbConfig, 'ortb2.user.data') || []
 
   const topicsUserData = []
   for (const [k, value] of Object.entries(topics)) {
@@ -176,24 +205,23 @@ function updateOrtbConfig(bidder, currConfig, segmentIDs, sspSegmentIDs, topics,
     })
   }
 
+  const ortbConfig = mergeDeep({}, currConfig)
+  const currentUserData = deepAccess(ortbConfig, 'ortb2.user.data') || []
   const updatedUserData = currentUserData
-    .filter(el => el.name !== permutiveUserData.name && el.name !== customCohortsUserData.name)
-    .concat(permutiveUserData, transformedUserData, customCohortsUserData)
+    .filter(el => el.name !== permutiveUserData.name && el.name !== ccUserData.name)
+    .concat(permutiveUserData, transformedUserData, ccUserData)
     .concat(topicsUserData)
 
   logger.logInfo(`Updating ortb2.user.data`, { bidder, user_data: updatedUserData })
   deepSetValue(ortbConfig, 'ortb2.user.data', updatedUserData)
 
-  // Set ortb2.user.keywords
   const currentKeywords = deepAccess(ortbConfig, 'ortb2.user.keywords')
   const keywordGroups = {
-    [PERMUTIVE_STANDARD_KEYWORD]: segmentIDs,
-    [PERMUTIVE_STANDARD_AUD_KEYWORD]: sspSegmentIDs,
-    [PERMUTIVE_CUSTOM_COHORTS_KEYWORD]: customCohortsData,
+    [PERMUTIVE_STANDARD_KEYWORD]: mergedSignals,
+    [PERMUTIVE_STANDARD_AUD_KEYWORD]: sspSignals,
+    [PERMUTIVE_CUSTOM_COHORTS_KEYWORD]: ccSignals,
   }
 
-  // Transform groups of key-values into a single array of strings
-  // i.e { permutive: ['1', '2'], p_standard: ['3', '4'] } => ['permutive=1', 'permutive=2', 'p_standard=3',' p_standard=4']
   const transformedKeywordGroups = Object.entries(keywordGroups)
     .flatMap(([keyword, ids]) => ids.map(id => `${keyword}=${id}`))
 
@@ -210,21 +238,19 @@ function updateOrtbConfig(bidder, currConfig, segmentIDs, sspSegmentIDs, topics,
   })
   deepSetValue(ortbConfig, 'ortb2.user.keywords', keywords)
 
-  // Set user extensions
-  if (segmentIDs.length > 0) {
-    deepSetValue(ortbConfig, `ortb2.user.ext.data.${PERMUTIVE_STANDARD_KEYWORD}`, segmentIDs)
-    logger.logInfo(`Extending ortb2.user.ext.data with "${PERMUTIVE_STANDARD_KEYWORD}"`, segmentIDs)
+  if (mergedSignals.length > 0) {
+    deepSetValue(ortbConfig, `ortb2.user.ext.data.${PERMUTIVE_STANDARD_KEYWORD}`, mergedSignals)
+    logger.logInfo(`Extending ortb2.user.ext.data with "${PERMUTIVE_STANDARD_KEYWORD}"`, mergedSignals)
   }
 
-  if (customCohortsData.length > 0) {
-    deepSetValue(ortbConfig, `ortb2.user.ext.data.${PERMUTIVE_CUSTOM_COHORTS_KEYWORD}`, customCohortsData.map(String))
-    logger.logInfo(`Extending ortb2.user.ext.data with "${PERMUTIVE_CUSTOM_COHORTS_KEYWORD}"`, customCohortsData)
+  if (ccSignals.length > 0) {
+    deepSetValue(ortbConfig, `ortb2.user.ext.data.${PERMUTIVE_CUSTOM_COHORTS_KEYWORD}`, ccSignals.map(String))
+    logger.logInfo(`Extending ortb2.user.ext.data with "${PERMUTIVE_CUSTOM_COHORTS_KEYWORD}"`, ccSignals)
   }
 
-  // Set site extensions
-  if (segmentIDs.length > 0) {
-    deepSetValue(ortbConfig, `ortb2.site.ext.permutive.${PERMUTIVE_STANDARD_KEYWORD}`, segmentIDs)
-    logger.logInfo(`Extending ortb2.site.ext.permutive with "${PERMUTIVE_STANDARD_KEYWORD}"`, segmentIDs)
+  if (mergedSignals.length > 0) {
+    deepSetValue(ortbConfig, `ortb2.site.ext.permutive.${PERMUTIVE_STANDARD_KEYWORD}`, mergedSignals)
+    logger.logInfo(`Extending ortb2.site.ext.permutive with "${PERMUTIVE_STANDARD_KEYWORD}"`, mergedSignals)
   }
 
   logger.logInfo(`Updated ortb2 config`, { bidder, config: ortbConfig })
@@ -308,51 +334,50 @@ export function isPermutiveOnPage () {
 }
 
 /**
- * Get all relevant segment IDs in an object
- * @param {number} maxSegs - Maximum number of segments to be included
- * @return {Object}
+ * Reads cohort data from local storage and returns organized by signal type
+ * @param {number} maxSegs - Maximum number of segments per signal type
+ * @return {Object} Segment data with AC, SSP, CC signals and topics
  */
 export function getSegments(maxSegs) {
   const segments = {
+    // AC Signals
     ac:
       makeSafe(() => {
-        const legacySegs =
+        const standardCohorts =
           makeSafe(() =>
             readSegments('_psegs', [])
               .map(Number)
               .filter((seg) => seg >= 1000000)
               .map(String),
           ) || [];
-        const _ppam = makeSafe(() => readSegments('_ppam', []).map(String)) || [];
-        const _pcrprs = makeSafe(() => readSegments('_pcrprs', []).map(String)) || [];
 
-        return [..._pcrprs, ..._ppam, ...legacySegs];
+        const dcrCohorts = makeSafe(() => readSegments('_pcrprs', []).map(String)) || [];
+
+        return [...dcrCohorts, ...standardCohorts].slice(0, maxSegs);
       }) || [],
 
-    ix:
+    // CC Signals
+    customCohorts:
       makeSafe(() => {
-        const _pindexs = readSegments('_pindexs', []);
-        return _pindexs.map(String);
+        const pprebid = makeSafe(() =>
+          readSegments('_pprebid', []).map(String)
+        ) || [];
+
+        const legacyAppnexus = makeSafe(() => readSegments('_papns', []).map(String)) || [];
+        const legacyRubicon = makeSafe(() => readSegments('_prubicons', []).map(String)) || [];
+        const legacyIndex = makeSafe(() => readSegments('_pindexs', []).map(String)) || [];
+        const legacyGam = makeSafe(() => readSegments('_pdfps', []).map(String)) || [];
+
+        return [...new Set([
+          ...pprebid,
+          ...legacyAppnexus,
+          ...legacyRubicon,
+          ...legacyIndex,
+          ...legacyGam
+        ])].slice(0, maxSegs);
       }) || [],
 
-    rubicon:
-      makeSafe(() => {
-        const _prubicons = readSegments('_prubicons', []);
-        return _prubicons.map(String);
-      }) || [],
-
-    appnexus:
-      makeSafe(() => {
-        const _papns = readSegments('_papns', []);
-        return _papns.map(String);
-      }) || [],
-
-    gam:
-      makeSafe(() => {
-        const _pdfps = readSegments('_pdfps', []);
-        return _pdfps.map(String);
-      }) || [],
-
+    // SSP Signals
     ssp: makeSafe(() => {
       const _pssps = readSegments('_pssps', {
         cohorts: [],
@@ -360,37 +385,24 @@ export function getSegments(maxSegs) {
       });
 
       return {
-        cohorts: makeSafe(() => _pssps.cohorts.map(String)) || [],
+        cohorts: (makeSafe(() => _pssps.cohorts.map(String)) || []).slice(0, maxSegs),
         ssps: makeSafe(() => _pssps.ssps.map(String)) || [],
       };
     }),
 
+    // Privacy Sandbox Topics
     topics:
       makeSafe(() => {
         const _ppsts = readSegments('_ppsts', {});
 
         const topics = {};
         for (const [k, value] of Object.entries(_ppsts)) {
-          topics[k] = makeSafe(() => value.map(String)) || [];
+          topics[k] = (makeSafe(() => value.map(String)) || []).slice(0, maxSegs);
         }
 
         return topics;
       }) || {},
   };
-
-  for (const bidder in segments) {
-    if (bidder === 'ssp') {
-      if (segments[bidder].cohorts && Array.isArray(segments[bidder].cohorts)) {
-        segments[bidder].cohorts = segments[bidder].cohorts.slice(0, maxSegs)
-      }
-    } else if (bidder === 'topics') {
-      for (const taxonomy in segments[bidder]) {
-        segments[bidder][taxonomy] = segments[bidder][taxonomy].slice(0, maxSegs)
-      }
-    } else {
-      segments[bidder] = segments[bidder].slice(0, maxSegs)
-    }
-  }
 
   logger.logInfo(`Read segments`, segments)
   return segments;
