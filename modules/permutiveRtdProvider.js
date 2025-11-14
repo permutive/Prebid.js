@@ -146,26 +146,15 @@ export function setBidderRtb (bidderOrtb2, moduleConfig, segmentData) {
     const isSspBidder = sspBidders.indexOf(bidder) > -1
     const isCcBidder = ccBidders.indexOf(bidder) > -1 || legacyCcBidders.indexOf(bidder) > -1
 
-    let signalsForBidder = []
-
-    if (isAcBidder) {
-      signalsForBidder = acSignals
-    }
-
-    if (isSspBidder) {
-      signalsForBidder = [...new Set([...signalsForBidder, ...sspSignals])].slice(0, maxSegs)
-    }
-
-    const ccSignals = isCcBidder ? customCohorts : []
-
     const nextConfig = updateOrtbConfig(
       bidder,
       currConfig,
-      signalsForBidder,
-      sspSignals,
+      isAcBidder ? acSignals : [],
+      isSspBidder ? sspSignals : [],
+      isCcBidder ? customCohorts : [],
       topics,
       transformationConfigs,
-      ccSignals
+      maxSegs
     )
     bidderOrtb2[bidder] = nextConfig.ortb2
   })
@@ -175,21 +164,25 @@ export function setBidderRtb (bidderOrtb2, moduleConfig, segmentData) {
  * Updates ORTB2 config for a bidder with Permutive signals
  * @param {string} bidder
  * @param {Object} currConfig
- * @param {string[]} mergedSignalIds - AC/SSP Signals for this bidder
- * @param {string[]} sspSignalIds - SSP Signals (for p_standard_aud)
+ * @param {string[]} acSignals - AC Signals for this bidder
+ * @param {string[]} sspSignals - SSP Signals for this bidder
+ * @param {string[]} ccSignals - CC Signals for this bidder
  * @param {Object} topics - Privacy Sandbox Topics
  * @param {Object[]} transformationConfigs - IAB taxonomy transformations
- * @param {string[]} ccSignals - CC Signals for this bidder
+ * @param {number} maxSegs - Maximum segments per signal type
  * @return {Object} Updated ortb2 config
  */
-function updateOrtbConfig(bidder, currConfig, mergedSignalIds, sspSignalIds, topics, transformationConfigs, ccSignals) {
+function updateOrtbConfig(bidder, currConfig, acSignals, sspSignals, ccSignals, topics, transformationConfigs, maxSegs) {
   logger.logInfo(`Current ortb2 config`, { bidder, config: currConfig })
+
+  // Merge AC + SSP signals for p_standard and permutive.com provider
+  const mergedSignals = [...new Set([...acSignals, ...sspSignals])].slice(0, maxSegs)
 
   const name = 'permutive.com'
 
   const permutiveUserData = {
     name,
-    segment: mergedSignalIds.map(segmentId => ({ id: segmentId })),
+    segment: mergedSignals.map(segmentId => ({ id: segmentId })),
   }
 
   const transformedUserData = transformationConfigs
@@ -224,13 +217,11 @@ function updateOrtbConfig(bidder, currConfig, mergedSignalIds, sspSignalIds, top
 
   const currentKeywords = deepAccess(ortbConfig, 'ortb2.user.keywords')
   const keywordGroups = {
-    [PERMUTIVE_STANDARD_KEYWORD]: mergedSignalIds,
-    [PERMUTIVE_STANDARD_AUD_KEYWORD]: sspSignalIds,
+    [PERMUTIVE_STANDARD_KEYWORD]: mergedSignals,
+    [PERMUTIVE_STANDARD_AUD_KEYWORD]: sspSignals,
     [PERMUTIVE_CUSTOM_COHORTS_KEYWORD]: ccSignals,
   }
 
-  // Transform groups of key-values into a single array of strings
-  // i.e { permutive: ['1', '2'], p_standard: ['3', '4'] } => ['permutive=1', 'permutive=2', 'p_standard=3', 'p_standard=4']
   const transformedKeywordGroups = Object.entries(keywordGroups)
     .flatMap(([keyword, ids]) => ids.map(id => `${keyword}=${id}`))
 
@@ -247,9 +238,9 @@ function updateOrtbConfig(bidder, currConfig, mergedSignalIds, sspSignalIds, top
   })
   deepSetValue(ortbConfig, 'ortb2.user.keywords', keywords)
 
-  if (mergedSignalIds.length > 0) {
-    deepSetValue(ortbConfig, `ortb2.user.ext.data.${PERMUTIVE_STANDARD_KEYWORD}`, mergedSignalIds)
-    logger.logInfo(`Extending ortb2.user.ext.data with "${PERMUTIVE_STANDARD_KEYWORD}"`, mergedSignalIds)
+  if (mergedSignals.length > 0) {
+    deepSetValue(ortbConfig, `ortb2.user.ext.data.${PERMUTIVE_STANDARD_KEYWORD}`, mergedSignals)
+    logger.logInfo(`Extending ortb2.user.ext.data with "${PERMUTIVE_STANDARD_KEYWORD}"`, mergedSignals)
   }
 
   if (ccSignals.length > 0) {
@@ -257,9 +248,9 @@ function updateOrtbConfig(bidder, currConfig, mergedSignalIds, sspSignalIds, top
     logger.logInfo(`Extending ortb2.user.ext.data with "${PERMUTIVE_CUSTOM_COHORTS_KEYWORD}"`, ccSignals)
   }
 
-  if (mergedSignalIds.length > 0) {
-    deepSetValue(ortbConfig, `ortb2.site.ext.permutive.${PERMUTIVE_STANDARD_KEYWORD}`, mergedSignalIds)
-    logger.logInfo(`Extending ortb2.site.ext.permutive with "${PERMUTIVE_STANDARD_KEYWORD}"`, mergedSignalIds)
+  if (mergedSignals.length > 0) {
+    deepSetValue(ortbConfig, `ortb2.site.ext.permutive.${PERMUTIVE_STANDARD_KEYWORD}`, mergedSignals)
+    logger.logInfo(`Extending ortb2.site.ext.permutive with "${PERMUTIVE_STANDARD_KEYWORD}"`, mergedSignals)
   }
 
   logger.logInfo(`Updated ortb2 config`, { bidder, config: ortbConfig })

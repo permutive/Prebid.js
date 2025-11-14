@@ -393,14 +393,14 @@ describe('permutiveRtdProvider', function () {
 
       acBidders.forEach(bidder => {
         const customCohortsData = segmentsData.customCohorts || []
+        const isSspBidder = segmentsData.ssp.ssps.includes(bidder)
+
         const keywordGroups = {
           [PERMUTIVE_STANDARD_KEYWORD]: segmentsData.ac,
-          [PERMUTIVE_STANDARD_AUD_KEYWORD]: segmentsData.ssp.cohorts,
+          [PERMUTIVE_STANDARD_AUD_KEYWORD]: isSspBidder ? segmentsData.ssp.cohorts : [],
           [PERMUTIVE_CUSTOM_COHORTS_KEYWORD]: customCohortsData
         }
 
-        // Transform groups of key-values into a single array of strings
-        // i.e { permutive: ['1', '2'], p_standard: ['3', '4'] } => ['permutive=1', 'permutive=2', 'p_standard=3',' p_standard=4']
         const transformedKeywordGroups = Object.entries(keywordGroups)
           .flatMap(([keyword, ids]) => ids.map(id => `${keyword}=${id}`))
 
