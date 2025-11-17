@@ -48,7 +48,6 @@ describe('permutiveRtdProvider', function () {
       params: {
         maxSegs: 500,
         acBidders: [],
-        ccBidders: [],
         overwrites: {},
       },
     })
@@ -201,7 +200,7 @@ describe('permutiveRtdProvider', function () {
       setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
       acBidders.forEach(bidder => {
-        const customCohorts = segmentsData.customCohorts || []
+        const customCohorts = segmentsData[bidder] || []
         expect(bidderConfig[bidder].user.data).to.deep.include.members([
           {
             name: 'permutive.com',
@@ -267,20 +266,30 @@ describe('permutiveRtdProvider', function () {
 
       setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
+      const legacyCcBidders = ['ix', 'rubicon', 'appnexus', 'gam']
+
       acBidders.forEach(bidder => {
-        const customCohorts = segmentsData.customCohorts || []
+        const customCohorts = segmentsData[bidder] || []
+        const isLegacyCcBidder = legacyCcBidders.includes(bidder)
 
         expect(bidderConfig[bidder].user.data).to.not.deep.include.members([...sampleOrtbConfig.user.data])
-        expect(bidderConfig[bidder].user.data).to.deep.include.members([
-          {
-            name: reservedPermutiveCustomCohortName,
-            segment: customCohorts.map(id => ({ id })),
-          },
+
+        const expectedUserData = [
           {
             name: reservedPermutiveStandardName,
             segment: segmentsData.ac.map(id => ({ id })),
           },
-        ])
+        ]
+
+        // Only legacy bidders get custom cohorts
+        if (isLegacyCcBidder && customCohorts.length > 0) {
+          expectedUserData.push({
+            name: reservedPermutiveCustomCohortName,
+            segment: customCohorts.map(id => ({ id })),
+          })
+        }
+
+        expect(bidderConfig[bidder].user.data).to.deep.include.members(expectedUserData)
       })
     })
 
@@ -391,8 +400,10 @@ describe('permutiveRtdProvider', function () {
 
       setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
+      const legacyCcBidders = ['ix', 'rubicon', 'appnexus', 'gam']
+
       acBidders.forEach(bidder => {
-        const customCohortsData = segmentsData.customCohorts || []
+        const customCohortsData = legacyCcBidders.includes(bidder) ? (segmentsData[bidder] || []) : []
         const isSspBidder = segmentsData.ssp.ssps.includes(bidder)
 
         const keywordGroups = {
@@ -443,8 +454,11 @@ describe('permutiveRtdProvider', function () {
 
       setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
+      const legacyCcBidders = ['ix', 'rubicon', 'appnexus', 'gam']
+
       acBidders.forEach(bidder => {
-        const customCohortsData = segmentsData.customCohorts || []
+        // Only legacy bidders get custom cohorts
+        const customCohortsData = legacyCcBidders.includes(bidder) ? (segmentsData[bidder] || []) : []
 
         const expectedKeywords = [
           ...existingKeywords,
@@ -538,7 +552,10 @@ describe('permutiveRtdProvider', function () {
         setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
         moduleConfig.params.acBidders.forEach(bidder => {
-          expect(bidderConfig[bidder].user).to.not.have.property('ext')
+          // When there are no cohorts, user.ext should not be created
+          if (bidderConfig[bidder] && bidderConfig[bidder].user) {
+            expect(bidderConfig[bidder].user).to.not.have.property('ext')
+          }
         })
       })
 
@@ -551,14 +568,18 @@ describe('permutiveRtdProvider', function () {
 
         setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
+        const legacyCcBidders = ['ix', 'rubicon', 'appnexus', 'gam']
+
         moduleConfig.params.acBidders.forEach(bidder => {
           const userExtData = {
             // Default targeting
             p_standard: segmentsData.ac,
           }
 
-          const customCohorts = segmentsData.customCohorts || []
-          if (customCohorts.length > 0) {
+          // Only legacy bidders get custom cohorts
+          const isLegacyCcBidder = legacyCcBidders.includes(bidder)
+          const customCohorts = segmentsData[bidder] || []
+          if (isLegacyCcBidder && customCohorts.length > 0) {
             deepSetValue(userExtData, 'permutive', customCohorts)
           }
 
@@ -573,8 +594,11 @@ describe('permutiveRtdProvider', function () {
         const bidderConfig = {}
 
         const segmentsData = transformedTargeting()
-        // Remove custom cohorts by setting to empty array
-        segmentsData.customCohorts = []
+        // Remove custom cohorts by setting bidder-specific arrays to empty
+        segmentsData.appnexus = []
+        segmentsData.rubicon = []
+        segmentsData.ix = []
+        segmentsData.gam = []
 
         setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
@@ -596,9 +620,13 @@ describe('permutiveRtdProvider', function () {
 
         setBidderRtb(bidderConfig, moduleConfig, segmentsData)
 
+        const legacyCcBidders = ['ix', 'rubicon', 'appnexus', 'gam']
+
         moduleConfig.params.acBidders.forEach(bidder => {
-          const customCohorts = segmentsData.customCohorts || []
-          if (customCohorts.length > 0) {
+          const customCohorts = segmentsData[bidder] || []
+          const isLegacyCcBidder = legacyCcBidders.includes(bidder)
+
+          if (isLegacyCcBidder && customCohorts.length > 0) {
             expect(bidderConfig[bidder].user.ext.data).to.deep
               .eq({ permutive: customCohorts })
           } else {
@@ -644,7 +672,7 @@ describe('permutiveRtdProvider', function () {
 
       const segments = getSegments(200)
 
-      expect(segments.customCohorts).to.deep.equal(['1', '2', '3'])
+      expect(segments.rubicon).to.deep.equal(['1', '2', '3'])
       expect(segments.ssp.ssps).to.deep.equal(['foo', 'bar'])
       expect(segments.ssp.cohorts).to.deep.equal(['4', '5', '6'])
     })
@@ -661,7 +689,7 @@ describe('permutiveRtdProvider', function () {
 
       const segments = getSegments(200)
 
-      expect(segments.customCohorts).to.deep.equal([])
+      expect(segments.rubicon).to.deep.equal([])
       expect(segments.ssp.ssps).to.deep.equal([])
       expect(segments.ssp.cohorts).to.deep.equal([])
     })
@@ -778,7 +806,6 @@ function getConfig () {
     waitForIt: true,
     params: {
       acBidders: ['appnexus', 'rubicon', 'ozone', 'trustx', 'ix'],
-      ccBidders: ['appnexus', 'rubicon', 'ozone', 'trustx', 'ix'],  // Same as acBidders so tests receive custom cohorts
       maxSegs: 500
     }
   }
@@ -793,19 +820,12 @@ function transformedTargeting (data = getTargetingData()) {
     return topics
   })()
 
-  // Merge all custom cohorts (from _pprebid + legacy keys)
-  const pprebid = data._pprebid || []
-  const customCohorts = [...new Set([
-    ...pprebid,
-    ...data._papns,
-    ...data._prubicons,
-    ...data._pindexs,
-    ...data._pdfps
-  ])].map(String)
-
   return {
     ac: [...data._pcrprs, ...data._psegs.filter(seg => seg >= 1000000)].map(String),
-    customCohorts: customCohorts,
+    appnexus: data._papns.map(String),
+    ix: data._pindexs.map(String),
+    rubicon: data._prubicons.map(String),
+    gam: data._pdfps.map(String),
     ssp: {
       ssps: data._pssps.ssps.map(String),
       cohorts: data._pssps.cohorts.map(String)

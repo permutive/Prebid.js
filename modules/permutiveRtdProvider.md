@@ -40,8 +40,7 @@ pbjs.setConfig({
       name: 'permutive',
       waitForIt: true, // should be true if there's an auctionDelay
       params: {
-        acBidders: ['appnexus', 'rubicon'],
-        ccBidders: ['ozone']
+        acBidders: ['appnexus', 'rubicon']
       }
     }]
   }
@@ -56,8 +55,72 @@ pbjs.setConfig({
 | waitForIt              | Boolean              | Should be `true` if there's an `auctionDelay` defined                                         | `false`            |
 | params                 | Object               | Module configuration parameters                                                               | -                  |
 | params.acBidders       | String[]             | Bidder codes to receive Standard Cohorts and DCR Cohorts (see Standard Cohorts section)      | `[]`               |
-| params.ccBidders       | String[]             | Bidder codes to receive Custom Cohorts (see Custom Cohorts section)                          | `[]`               |
 | params.maxSegs         | Integer              | Maximum number of cohorts per cohort type                                                     | `500`              |
+
+## SDK-Driven Configuration
+
+The Permutive RTD module uses an SDK-driven configuration approach that allows the Permutive SDK to dynamically specify which cohorts should be sent to which bidders and where in the ORTB2 structure they should be placed. This is the recommended approach as it enables flexible cohort distribution without requiring Prebid configuration changes.
+
+### How It Works
+
+The Permutive SDK writes cohort distribution rules to the `_ppbconf` local storage key. The RTD module reads this configuration and applies it automatically alongside any legacy configuration (`acBidders`, Custom Cohorts for specific bidders, etc.). Both modes run simultaneously - cohorts from both sources are merged and deduplicated before being sent to bidders.
+
+### Configuration Structure
+
+The `_ppbconf` key contains an array of cohort distribution rules:
+
+```javascript
+[
+  {
+    "bidders": ["appnexus", "rubicon"],
+    "cohorts": ["cohort1", "cohort2", "cohort3"],
+    "locations": [
+      {
+        "path": "user.data",
+        "name": "permutive.com"
+      },
+      {
+        "path": "user.keywords",
+        "key": "p_standard"
+      }
+    ]
+  }
+]
+```
+
+Each rule specifies:
+- **bidders**: Array of bidder codes that should receive these cohorts
+- **cohorts**: Array of cohort IDs to send
+- **locations**: Array of ORTB2 locations where cohorts should be placed
+
+### Supported Locations
+
+| Path | Required Fields | Description | Example |
+|------|----------------|-------------|---------|
+| `user.data` | `name` | User data provider | `{"path": "user.data", "name": "permutive.com"}` |
+| `user.keywords` | `key` | Keywords with key prefix | `{"path": "user.keywords", "key": "p_standard"}` |
+| `user.ext.data` | `key` | User extended data | `{"path": "user.ext.data", "key": "p_standard"}` |
+| `site.ext.permutive` | `key` | Site extended data | `{"path": "site.ext.permutive", "key": "p_standard"}` |
+
+### Privacy Sandbox Topics
+
+For Privacy Sandbox Topics, include the `ext` field with the taxonomy version:
+
+```javascript
+{
+  "bidders": ["appnexus"],
+  "cohorts": ["1", "2", "3"],
+  "locations": [
+    {
+      "path": "user.data",
+      "name": "permutive.com",
+      "ext": {
+        "segtax": 600
+      }
+    }
+  ]
+}
+```
 
 ## GDPR and TCF Configuration
 
@@ -113,30 +176,19 @@ Standard Cohorts are sent to bidders in the `p_standard` keyword and as `ortb2.u
 
 Custom Cohorts are publisher-defined audience segments created in the Permutive dashboard, typically used for direct deals and private marketplace (PMP) setups.
 
-To enable Custom Cohorts for specific bidders, add their bidder codes to the `ccBidders` parameter:
-
-```javascript
-pbjs.setConfig({
-  realTimeData: {
-    dataProviders: [{
-      name: 'permutive',
-      params: {
-        ccBidders: ['appnexus', 'rubicon', 'ozone']
-      }
-    }]
-  }
-})
-```
-
 **Legacy Bidder Support:**
 
-The following bidders automatically receive Custom Cohorts for backwards compatibility, even if not included in `ccBidders`:
+The following bidders automatically receive Custom Cohorts for backwards compatibility:
 - Index Exchange (`ix`)
 - Rubicon/Magnite (`rubicon`)
 - AppNexus/Xandr (`appnexus`)
 - Google Ad Manager (`gam`)
 
-Custom Cohorts are read from the `_pprebid` local storage key (set by the Permutive SDK) and sent to target bidders in the `permutive` keyword and as `ortb2.user.data` with provider name `permutive`.
+Custom Cohorts are read from legacy local storage keys (e.g., `_papns`, `_prubicons`, `_pindexs`, `_pdfps`) set by the Permutive SDK and sent to these bidders in the `permutive` keyword and as `ortb2.user.data` with provider name `permutive`.
+
+**Extending Custom Cohorts to Additional Bidders:**
+
+To send Custom Cohorts to additional bidders beyond the four legacy bidders, use the SDK-Driven Configuration mode (see SDK-Driven Configuration section above). The Permutive SDK can specify custom cohort distribution rules via the `_ppbconf` local storage key.
 
 ### Advertiser Cohorts
 
