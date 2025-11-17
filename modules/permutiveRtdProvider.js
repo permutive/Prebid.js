@@ -30,10 +30,9 @@
 
 import {getGlobal} from '../src/prebidGlobal.js';
 import {submodule} from '../src/hook.js';
+import {MODULE_TYPE_RTD} from '../src/activities/modules.js';
 import {getStorageManager} from '../src/storageManager.js';
 import {deepAccess, deepSetValue, isFn, logError, mergeDeep, isPlainObject, safeJSONParse, prefixLog} from '../src/utils.js';
-
-import {MODULE_TYPE_RTD} from '../src/activities/modules.js';
 
 /**
  * @typedef {import('../modules/rtdModule/index.js').RtdSubmodule} RtdSubmodule
@@ -427,9 +426,9 @@ function readSegments (key, defaultValue) {
 const unknownIabSegmentId = '_unknown_'
 
 /**
- * Functions to apply to ORT2B2 `user.data` objects.
- * Each function should return an a new object containing a `name`, (optional) `ext` and `segment`
- * properties. The result of the each transformation defined here will be appended to the array
+ * Functions to apply to ORTB2 `user.data` objects.
+ * Each function should return a new object containing `name`, (optional) `ext` and `segment`
+ * properties. The result of each transformation defined here will be appended to the array
  * under `user.data` in the bid request.
  */
 const ortb2UserDataTransformations = {
@@ -454,9 +453,8 @@ function iabSegmentId(permutiveSegmentId, iabIds) {
 
 /**
  * Pull the latest configuration and cohort information and update accordingly.
- *
- * @param reqBidsConfigObj - Bidder provided config for request
- * @param moduleConfig - Publisher provided config
+ * @param {Object} reqBidsConfigObj - Bidder provided config for request
+ * @param {Object} moduleConfig - Publisher provided config
  */
 export function readAndSetCohorts(reqBidsConfigObj, moduleConfig) {
   const segmentData = getSegments(deepAccess(moduleConfig, 'params.maxSegs'))
