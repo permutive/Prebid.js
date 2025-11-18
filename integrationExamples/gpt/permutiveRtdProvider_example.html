@@ -10,13 +10,31 @@
 
             function setLocalStorageData () {
               const data = {
+                // AC Signals
+                _psegs: ['1234', '1000001', '1000002'], // Standard cohorts (>= 1000000)
+                _pcrprs: ['pcrprs1', 'pcrprs2'], // DCR cohorts
+
+                // SSP Signals
+                _pssps: { ssps: ['appnexus', 'some other'], cohorts: ['abcd', 'efgh', 'ijkl'] },
+
+                // CC Signals - Legacy keys (only sent to ix, rubicon, appnexus, gam by default)
                 _pdfps: ['gam1', 'gam2'],
                 _prubicons: ['rubicon1', 'rubicon2'],
                 _papns: ['appnexus1', 'appnexus2'],
-                _psegs: ['1234', '1000001', '1000002'],
-                _ppam: ['ppam1', 'ppam2'],
-                _pcrprs: ['pcrprs1', 'pcrprs2'],
-                _pssps: { ssps: ['appnexus', 'some other'], cohorts: ['abcd', 'efgh', 'ijkl'] },
+                _pindexs: ['index1', 'index2'],
+
+                // SDK-Driven Configuration
+                // Recommended approach: allows dynamic cohort distribution without Prebid config changes
+                _ppbconf: [
+                  {
+                    bidders: ['ozone'],
+                    cohorts: ['sdk_cohort_1', 'sdk_cohort_2'],
+                    locations: [
+                      { path: 'user.data', name: 'permutive' },
+                      { path: 'user.keywords', key: 'permutive' }
+                    ]
+                  }
+                ]
               }
 
               for (let key in data) {
@@ -91,15 +109,6 @@
                       ],
                       ozoneData: {}
                     }
-                  },
-                  {
-                    bidder: 'trustx',
-                    params: {
-                      uid: 45,
-                      keywords: {
-                        test_kv: ['true']
-                      }
-                    }
                   }
                 ]
               },
@@ -150,7 +159,7 @@
                       name: 'permutive',
                       waitForIt: true,
                       params: {
-                        acBidders: ['appnexus', 'rubicon', 'ozone', 'trustx', 'ix'],
+                        acBidders: ['appnexus', 'rubicon', 'ozone', 'ix'],
                         maxSegs: 500,
                         transformations: [
                           {
@@ -179,6 +188,7 @@
                   ]
                 }
               });
+
               pbjs.setBidderConfig({
                 bidders: ['appnexus', 'rubicon', 'ix'],
                 config: {
