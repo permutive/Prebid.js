@@ -21,9 +21,8 @@
  *      - `_psegs` (IDs >= 1000000) and `_pcrprs` form the AC signals sent to
  *        `params.acBidders`
  *      - `_pssps` ({ ssps, cohorts }) routes SSP signals to the listed bidders
- *      - `_papns`, `_prubicons`, `_pindexs`, `_pdfps` hold custom cohorts for
- *        appnexus, rubicon, ix and gam respectively
- *      - `_ppsts` holds Privacy Sandbox Topics keyed by IAB taxonomy version
+ *      - `_papns`, `_prubicons`, `_pindexs` hold custom cohorts for
+ *        appnexus, rubicon and ix respectively
  *
  * Signals from both mechanisms are merged and deduplicated per bidder and
  * ORTB2 location before being applied, with `params.maxSegs` enforced per
@@ -32,10 +31,9 @@
  * @module modules/permutiveRtdProvider
  * @requires module:modules/realTimeData
  */
-import { getGlobal } from '../src/prebidGlobal.js';
 import { submodule } from '../src/hook.js';
 import { getStorageManager } from '../src/storageManager.js';
-import { deepAccess, deepSetValue, isFn, isStr, logError, mergeDeep, isPlainObject, safeJSONParse, prefixLog } from '../src/utils.js';
+import { deepAccess, deepSetValue, isStr, logError, mergeDeep, isPlainObject, safeJSONParse, prefixLog } from '../src/utils.js';
 import { VENDORLESS_GVLID } from '../src/consentHandler.js';
 import { hasPurposeConsent } from '../libraries/permutiveUtils/index.js';
 
@@ -46,7 +44,6 @@ import { MODULE_TYPE_RTD } from '../src/activities/modules.js';
  * @typedef {import('./permutiveRtdProvider.d.ts').PermutiveRtdProviderConfig} PermutiveRtdProviderConfig
  * @typedef {import('./permutiveRtdProvider.d.ts').PermutiveRtdProviderParams} PermutiveRtdProviderParams
  * @typedef {import('./permutiveRtdProvider.d.ts').PermutiveBidderConfig} PermutiveBidderConfig
- * @typedef {import('./permutiveRtdProvider.d.ts').PermutiveTransformationConfig} PermutiveTransformationConfig
  * @typedef {import('./permutiveRtdProvider.d.ts').PermutiveSignalRule} PermutiveSignalRule
  * @typedef {import('./permutiveRtdProvider.d.ts').PermutiveSignalLocation} PermutiveSignalLocation
  */
@@ -73,7 +70,7 @@ const SITE_EXT_PERMUTIVE_PATH = 'site.ext.permutive';
  * localStorage keys without any publisher configuration. Kept for backwards
  * compatibility with existing activations.
  */
-const LEGACY_CUSTOM_COHORT_BIDDERS = ['appnexus', 'rubicon', 'ix', 'gam'];
+const LEGACY_CUSTOM_COHORT_BIDDERS = ['appnexus', 'rubicon', 'ix'];
 
 /**
  * Built-in ORTB2 location definitions, overridable via `params.locations`.
@@ -169,7 +166,6 @@ export function getModuleConfig(customModuleConfig) {
     params: {
       maxSegs: 500,
       acBidders: [],
-      overwrites: {},
       enforceVendorConsent: false,
       bidders: {},
     },
@@ -350,7 +346,6 @@ function buildLegacySignalRules(moduleConfig, segmentData) {
   const acSignals = segmentData?.ac ?? [];
   const sspBidders = segmentData?.ssp?.ssps ?? [];
   const sspSignals = segmentData?.ssp?.cohorts ?? [];
-  const topics = segmentData?.topics ?? {};
 
   const standardLocations = [
     { path: USER_DATA_PATH, name: PERMUTIVE_DATA_PROVIDER_NAME },
@@ -392,16 +387,6 @@ function buildLegacySignalRules(moduleConfig, segmentData) {
       cohorts: getCustomCohorts(biddersConfig[bidder], bidder, segmentData),
       locations: customCohortLocations,
     });
-
-    for (const [taxonomy, topicIds] of Object.entries(topics)) {
-      if (topicIds.length > 0) {
-        rules.push({
-          bidders: [bidder],
-          cohorts: topicIds,
-          locations: [{ path: USER_DATA_PATH, name: PERMUTIVE_DATA_PROVIDER_NAME, ext: { segtax: Number(taxonomy) } }],
-        });
-      }
-    }
   });
 
   return rules;
@@ -491,7 +476,6 @@ export function setBidderRtb(bidderOrtb2, moduleConfig, segmentData) {
   }
 
   const maxSegs = deepAccess(moduleConfig, 'params.maxSegs');
-  const transformationConfigs = deepAccess(moduleConfig, 'params.transformations') || [];
 
   const rules = [
     ...buildCohortStoreSignalRules(moduleConfig),
@@ -505,7 +489,7 @@ export function setBidderRtb(bidderOrtb2, moduleConfig, segmentData) {
 
     locations.forEach(({ location, cohorts }) => {
       const limitedCohorts = Array.from(cohorts).slice(0, maxSegs);
-      applyCohortsToOrtb2(ortbConfig, location, limitedCohorts, transformationConfigs);
+      applyCohortsToOrtb2(ortbConfig, location, limitedCohorts);
     });
 
     logger.logInfo(`Updated ortb2 config`, { bidder, config: ortbConfig });
@@ -519,12 +503,11 @@ export function setBidderRtb(bidderOrtb2, moduleConfig, segmentData) {
  * @param {Object} ortbConfig - Object with an `ortb2` property, mutated in place
  * @param {PermutiveSignalLocation} location
  * @param {string[]} cohorts
- * @param {PermutiveTransformationConfig[]} transformationConfigs
  */
-function applyCohortsToOrtb2(ortbConfig, location, cohorts, transformationConfigs) {
+function applyCohortsToOrtb2(ortbConfig, location, cohorts) {
   switch (location.path) {
     case USER_DATA_PATH:
-      applyToUserData(ortbConfig, location, cohorts, transformationConfigs);
+      applyToUserData(ortbConfig, location, cohorts);
       break;
     case USER_KEYWORDS_PATH:
       applyToUserKeywords(ortbConfig, location.key, cohorts);
@@ -558,9 +541,8 @@ function isSameUserDataSlot(a, b) {
  * @param {Object} ortbConfig - Object with an `ortb2` property, mutated in place
  * @param {PermutiveSignalLocation} location
  * @param {string[]} cohorts
- * @param {PermutiveTransformationConfig[]} transformationConfigs
  */
-function applyToUserData(ortbConfig, location, cohorts, transformationConfigs) {
+function applyToUserData(ortbConfig, location, cohorts) {
   const { name, ext } = location;
 
   // The custom cohorts entry has always been present even when empty, and is
@@ -575,20 +557,10 @@ function applyToUserData(ortbConfig, location, cohorts, transformationConfigs) {
     ...(ext && { ext }),
   };
 
-  // Publisher-configured IAB taxonomy transformations only ever apply to the
-  // standard cohorts entry
-  const transformedUserData = (name === PERMUTIVE_DATA_PROVIDER_NAME && !ext && cohorts.length > 0)
-    ? transformationConfigs
-      .filter(({ id }) => ortb2UserDataTransformations.hasOwnProperty(id))
-      .map(({ id, config }) => ortb2UserDataTransformations[id](userData, config))
-    : [];
-
-  const newEntries = [userData, ...transformedUserData];
-
   const currentUserData = deepAccess(ortbConfig, 'ortb2.user.data') || [];
   const updatedUserData = currentUserData
-    .filter(existing => !newEntries.some(entry => isSameUserDataSlot(existing, entry)))
-    .concat(newEntries);
+    .filter(existing => !isSameUserDataSlot(existing, userData))
+    .concat(userData);
 
   deepSetValue(ortbConfig, 'ortb2.user.data', updatedUserData);
 }
@@ -619,41 +591,6 @@ function applyToUserKeywords(ortbConfig, keywordKey, cohorts) {
 }
 
 /**
- * Set segments on bid request object
- * @param {Object} reqBidsConfigObj - Bid request object
- * @param {PermutiveRtdProviderConfig} moduleConfig - Module configuration
- * @param {Object} segmentData - Segment object
- */
-function setSegments (reqBidsConfigObj, moduleConfig, segmentData) {
-  const adUnits = (reqBidsConfigObj && reqBidsConfigObj.adUnits) || getGlobal().adUnits;
-  const utils = { deepSetValue, deepAccess, isFn, mergeDeep };
-  const aliasMap = {
-    appnexusAst: 'appnexus'
-  };
-
-  if (!adUnits) {
-    return;
-  }
-
-  adUnits.forEach(adUnit => {
-    adUnit.bids.forEach(bid => {
-      let { bidder } = bid;
-      if (typeof aliasMap[bidder] !== 'undefined') {
-        bidder = aliasMap[bidder];
-      }
-      const acEnabled = isAcEnabled(moduleConfig, bidder);
-      const customFn = getCustomBidderFn(moduleConfig, bidder);
-
-      if (customFn) {
-        // For backwards compatibility we pass an identity function to any custom bidder function set by a publisher
-        const bidIdentity = (bid) => bid;
-        customFn(bid, segmentData, acEnabled, utils, bidIdentity);
-      }
-    });
-  });
-}
-
-/**
  * Catch and log errors
  * @param {function} fn - Function to safely evaluate
  */
@@ -663,27 +600,6 @@ function makeSafe (fn) {
   } catch (e) {
     logError(e);
   }
-}
-
-function getCustomBidderFn (moduleConfig, bidder) {
-  const overwriteFn = deepAccess(moduleConfig, `params.overwrites.${bidder}`);
-
-  if (overwriteFn && isFn(overwriteFn)) {
-    return overwriteFn;
-  } else {
-    return null;
-  }
-}
-
-/**
- * Check whether ac is enabled for bidder
- * @param {PermutiveRtdProviderConfig} moduleConfig - Module configuration
- * @param {string} bidder - Bidder name
- * @return {boolean}
- */
-export function isAcEnabled (moduleConfig, bidder) {
-  const acBidders = deepAccess(moduleConfig, 'params.acBidders') || [];
-  return acBidders.includes(bidder);
 }
 
 /**
@@ -733,12 +649,6 @@ export function getSegments(maxSegs) {
         return _papns.map(String);
       }) || [],
 
-    gam:
-      makeSafe(() => {
-        const _pdfps = readSegments('_pdfps', []);
-        return _pdfps.map(String);
-      }) || [],
-
     ssp: makeSafe(() => {
       const _pssps = readSegments('_pssps', {
         cohorts: [],
@@ -750,28 +660,12 @@ export function getSegments(maxSegs) {
         ssps: makeSafe(() => _pssps.ssps.map(String)) || [],
       };
     }),
-
-    topics:
-      makeSafe(() => {
-        const _ppsts = readSegments('_ppsts', {});
-
-        const topics = {};
-        for (const [k, value] of Object.entries(_ppsts)) {
-          topics[k] = makeSafe(() => value.map(String)) || [];
-        }
-
-        return topics;
-      }) || {},
   };
 
   for (const bidder in segments) {
     if (bidder === 'ssp') {
       if (segments[bidder].cohorts && Array.isArray(segments[bidder].cohorts)) {
         segments[bidder].cohorts = segments[bidder].cohorts.slice(0, maxSegs);
-      }
-    } else if (bidder === 'topics') {
-      for (const taxonomy in segments[bidder]) {
-        segments[bidder][taxonomy] = segments[bidder][taxonomy].slice(0, maxSegs);
       }
     } else {
       segments[bidder] = segments[bidder].slice(0, maxSegs);
@@ -798,34 +692,6 @@ function readSegments (key, defaultValue) {
   }
 }
 
-const unknownIabSegmentId = '_unknown_';
-
-/**
- * Functions to apply to ORT2B2 `user.data` objects.
- * Each function should return an a new object containing a `name`, (optional) `ext` and `segment`
- * properties. The result of the each transformation defined here will be appended to the array
- * under `user.data` in the bid request.
- */
-const ortb2UserDataTransformations = {
-  iab: (userData, config) => ({
-    name: userData.name,
-    ext: { segtax: config.segtax },
-    segment: (userData.segment || [])
-      .map(segment => ({ id: iabSegmentId(segment.id, config.iabIds) }))
-      .filter(segment => segment.id !== unknownIabSegmentId)
-  })
-};
-
-/**
- * Transform a Permutive segment ID into an IAB audience taxonomy ID.
- * @param {string} permutiveSegmentId
- * @param {Object} iabIds object of mappings between Permutive and IAB segment IDs (key: permutive ID, value: IAB ID)
- * @return {string} IAB audience taxonomy ID associated with the Permutive segment ID
- */
-function iabSegmentId(permutiveSegmentId, iabIds) {
-  return iabIds[permutiveSegmentId] || unknownIabSegmentId;
-}
-
 /**
  * Pull the latest configuration and cohort information and update accordingly.
  *
@@ -836,13 +702,6 @@ export function readAndSetCohorts(reqBidsConfigObj, moduleConfig) {
   const segmentData = getSegments(deepAccess(moduleConfig, 'params.maxSegs'));
 
   makeSafe(function () {
-    // Legacy route with custom parameters
-    // ACK policy violation, in process of removing
-    setSegments(reqBidsConfigObj, moduleConfig, segmentData);
-  });
-
-  makeSafe(function () {
-    // Route for bidders supporting ORTB2
     setBidderRtb(reqBidsConfigObj.ortb2Fragments?.bidder, moduleConfig, segmentData);
   });
 }

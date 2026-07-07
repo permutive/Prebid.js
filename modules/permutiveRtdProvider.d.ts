@@ -58,28 +58,6 @@ export interface PermutiveBidderConfig {
   placement?: Partial<Record<PermutiveCohortCategory, string[]>>;
 }
 
-export interface PermutiveIabTransformationConfig {
-  /**
-   * IAB audience taxonomy version (e.g. `4` for v1.1).
-   */
-  segtax: number;
-  /**
-   * Mapping of Permutive segment IDs (keys) to IAB taxonomy IDs (values).
-   */
-  iabIds: Record<string, string>;
-}
-
-export interface PermutiveTransformationConfig {
-  /**
-   * Transformation identifier. Currently only `iab` is supported.
-   */
-  id: 'iab';
-  /**
-   * Transformation-specific configuration.
-   */
-  config: PermutiveIabTransformationConfig;
-}
-
 export interface PermutiveRtdProviderParams {
   /**
    * Bidder codes to share Permutive cohorts with via the Audience Connector
@@ -102,11 +80,6 @@ export interface PermutiveRtdProviderParams {
    * bidder, even if it is not in `acBidders` or on Permutive's SSP list.
    */
   bidders?: Record<string, PermutiveBidderConfig>;
-  /**
-   * Transformations to apply to `user.data` entries before they are written
-   * to the ortb2 payload.
-   */
-  transformations?: PermutiveTransformationConfig[];
   /**
    * ORTB2 location definitions, merged over the built-in defaults. Keys are
    * location ids referenced from placement policies.

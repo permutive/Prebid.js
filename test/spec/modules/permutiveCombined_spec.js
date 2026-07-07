@@ -2,18 +2,16 @@ import {
   permutiveSubmodule,
   storage,
   getSegments,
-  isAcEnabled,
   isPermutiveOnPage,
   setBidderRtb,
   getModuleConfig,
   PERMUTIVE_SUBMODULE_CONFIG_KEY,
   PERMUTIVE_COHORTS_KEY,
-  readAndSetCohorts,
   PERMUTIVE_STANDARD_KEYWORD,
   PERMUTIVE_STANDARD_AUD_KEYWORD,
   PERMUTIVE_CUSTOM_COHORTS_KEYWORD,
 } from 'modules/permutiveRtdProvider.js';
-import { deepAccess, deepSetValue, mergeDeep } from '../../../src/utils.js';
+import { deepSetValue, mergeDeep } from '../../../src/utils.js';
 import { config } from 'src/config.js';
 import { permutiveIdentityManagerIdSubmodule, storage as permutiveIdStorage } from '../../../modules/permutiveIdentityManagerIdSystem.js';
 
@@ -127,7 +125,6 @@ describe('permutiveRtdProvider', function () {
       params: {
         maxSegs: 500,
         acBidders: [],
-        overwrites: {},
         enforceVendorConsent: false,
         bidders: {},
       },
@@ -294,28 +291,6 @@ describe('permutiveRtdProvider', function () {
               return { id: seg };
             }),
           },
-          {
-            name: 'permutive.com',
-            ext: {
-              segtax: 600
-            },
-            segment: [
-              { id: '1' },
-              { id: '2' },
-              { id: '3' },
-            ],
-          },
-          {
-            name: 'permutive.com',
-            ext: {
-              segtax: 601
-            },
-            segment: [
-              { id: '100' },
-              { id: '101' },
-              { id: '102' },
-            ],
-          },
         ]);
       });
     });
@@ -364,47 +339,6 @@ describe('permutiveRtdProvider', function () {
       });
     });
 
-    it('should include ortb2 user data transformation for IAB audience taxonomy', function() {
-      const moduleConfig = getConfig();
-      const bidderConfig = {};
-      const acBidders = moduleConfig.params.acBidders;
-      const segmentsData = transformedTargeting();
-      const expectedTargetingData = segmentsData.ac.map(seg => {
-        return { id: seg };
-      });
-
-      Object.assign(
-        moduleConfig.params,
-        {
-          transformations: [{
-            id: 'iab',
-            config: {
-              segtax: 4,
-              iabIds: {
-                1000001: '9000009',
-                1000002: '9000008'
-              }
-            }
-          }]
-        }
-      );
-
-      setBidderRtb(bidderConfig, moduleConfig, segmentsData);
-
-      acBidders.forEach(bidder => {
-        expect(bidderConfig[bidder].user.data).to.deep.include.members([
-          {
-            name: 'permutive.com',
-            segment: expectedTargetingData
-          },
-          {
-            name: 'permutive.com',
-            ext: { segtax: 4 },
-            segment: [{ id: '9000009' }, { id: '9000008' }]
-          }
-        ]);
-      });
-    });
     it('should not overwrite ortb2 config', function () {
       const moduleConfig = getConfig();
       const acBidders = moduleConfig.params.acBidders;
@@ -628,12 +562,15 @@ describe('permutiveRtdProvider', function () {
 
       setBidderRtb(bidderConfig, moduleConfig, segmentsData);
 
-      ['appnexus', 'rubicon', 'ix', 'gam'].forEach(bidder => {
+      ['appnexus', 'rubicon', 'ix'].forEach(bidder => {
         expect(bidderConfig[bidder].user.data).to.deep.include.members([{
           name: 'permutive',
           segment: segmentsData[bidder].map(id => ({ id })),
         }]);
       });
+
+      // gam is not a Prebid bidder: no ortb2 fragment is written for it
+      expect(bidderConfig).to.not.have.property('gam');
     });
 
     describe('ortb2.user.ext tests', function () {
@@ -1033,10 +970,6 @@ describe('permutiveRtdProvider', function () {
       for (const key in segments) {
         if (key === 'ssp') {
           expect(segments[key].cohorts).to.have.length(max);
-        } else if (key === 'topics') {
-          for (const topic in segments[key]) {
-            expect(segments[key][topic]).to.have.length(max);
-          }
         } else {
           expect(segments[key]).to.have.length(max);
         }
@@ -1064,95 +997,9 @@ describe('permutiveRtdProvider', function () {
     });
   });
 
-  describe('Existing key-value targeting', function () {
-    it('doesn\'t overwrite existing key-values for Xandr', function () {
-      const adUnits = getAdUnits();
-      const config = getConfig();
-
-      readAndSetCohorts({ adUnits }, config);
-
-      adUnits.forEach(adUnit => {
-        adUnit.bids.forEach(bid => {
-          const { bidder, params } = bid;
-
-          if (bidder === 'appnexus') {
-            expect(deepAccess(params, 'keywords.test_kv')).to.eql(['true']);
-          }
-        });
-      });
-    });
-    it('doesn\'t overwrite existing key-values for Magnite', function () {
-      const adUnits = getAdUnits();
-      const config = getConfig();
-
-      readAndSetCohorts({ adUnits }, config);
-
-      adUnits.forEach(adUnit => {
-        adUnit.bids.forEach(bid => {
-          const { bidder, params } = bid;
-
-          if (bidder === 'rubicon') {
-            expect(deepAccess(params, 'visitor.test_kv')).to.eql(['true']);
-          }
-        });
-      });
-    });
-    it('doesn\'t overwrite existing key-values for Ozone', function () {
-      const adUnits = getAdUnits();
-      const config = getConfig();
-
-      readAndSetCohorts({ adUnits }, config);
-
-      adUnits.forEach(adUnit => {
-        adUnit.bids.forEach(bid => {
-          const { bidder, params } = bid;
-
-          if (bidder === 'ozone') {
-            expect(deepAccess(params, 'customData.0.targeting.test_kv')).to.eql(['true']);
-          }
-        });
-      });
-    });
-    it('doesn\'t overwrite existing key-values for TrustX', function () {
-      const adUnits = getAdUnits();
-      const config = getConfig();
-
-      readAndSetCohorts({ adUnits }, config);
-
-      adUnits.forEach(adUnit => {
-        adUnit.bids.forEach(bid => {
-          const { bidder, params } = bid;
-
-          if (bidder === 'trustx') {
-            expect(deepAccess(params, 'keywords.test_kv')).to.eql(['true']);
-          }
-        });
-      });
-    });
-  });
-
   describe('Permutive on page', function () {
     it('checks if Permutive is on page', function () {
       expect(isPermutiveOnPage()).to.equal(false);
-    });
-  });
-
-  describe('AC is enabled', function () {
-    it('checks if AC is enabled for Xandr', function () {
-      expect(isAcEnabled({ params: { acBidders: ['appnexus'] } }, 'appnexus')).to.equal(true);
-      expect(isAcEnabled({ params: { acBidders: ['kjdbfkvb'] } }, 'appnexus')).to.equal(false);
-    });
-    it('checks if AC is enabled for Magnite', function () {
-      expect(isAcEnabled({ params: { acBidders: ['rubicon'] } }, 'rubicon')).to.equal(true);
-      expect(isAcEnabled({ params: { acBidders: ['kjdbfkb'] } }, 'rubicon')).to.equal(false);
-    });
-    it('checks if AC is enabled for Ozone', function () {
-      expect(isAcEnabled({ params: { acBidders: ['ozone'] } }, 'ozone')).to.equal(true);
-      expect(isAcEnabled({ params: { acBidders: ['kjdvb'] } }, 'ozone')).to.equal(false);
-    });
-    it('checks if AC is enabled for Index', function () {
-      expect(isAcEnabled({ params: { acBidders: ['ix'] } }, 'ix')).to.equal(true);
-      expect(isAcEnabled({ params: { acBidders: ['kjdvb'] } }, 'ix')).to.equal(false);
     });
   });
 });
@@ -1181,27 +1028,17 @@ function getConfig () {
 }
 
 function transformedTargeting (data = getTargetingData()) {
-  const topics = (() => {
-    const topics = {};
-    for (const topic in data._ppsts) {
-      topics[topic] = data._ppsts[topic].map(String);
-    }
-    return topics;
-  })();
-
   return {
-    // _ppam is deliberately not included: the key is no longer written by the
-    // Permutive SDK and the module no longer reads it
+    // _ppam, _pdfps and _ppsts are deliberately not included: those keys are
+    // no longer read by the module
     ac: [...data._pcrprs, ...data._psegs.filter(seg => seg >= 1000000)].map(String),
     appnexus: data._papns.map(String),
     ix: data._pindexs.map(String),
     rubicon: data._prubicons.map(String),
-    gam: data._pdfps.map(String),
     ssp: {
       ssps: data._pssps.ssps.map(String),
       cohorts: data._pssps.cohorts.map(String)
     },
-    topics,
   };
 }
 
@@ -1217,140 +1054,6 @@ function getTargetingData () {
     _pssps: { ssps: ['xyz', 'abc', 'dup'], cohorts: ['123', 'abc'] },
     _ppsts: { '600': [1, 2, 3], '601': [100, 101, 102] },
   };
-}
-
-function getAdUnits () {
-  const div1sizes = [
-    [300, 250],
-    [300, 600]
-  ];
-  const div2sizes = [
-    [728, 90],
-    [970, 250]
-  ];
-  return [
-    {
-      code: '/19968336/header-bid-tag-0',
-      mediaTypes: {
-        banner: {
-          sizes: div1sizes
-        }
-      },
-      bids: [
-        {
-          bidder: 'appnexus',
-          params: {
-            placementId: 13144370,
-            keywords: {
-              test_kv: ['true']
-            }
-          }
-        },
-        {
-          bidder: 'rubicon',
-          params: {
-            accountId: '9840',
-            siteId: '123564',
-            zoneId: '583584',
-            inventory: {
-              area: ['home']
-            },
-            visitor: {
-              test_kv: ['true']
-            }
-          }
-        },
-        {
-          bidder: 'ozone',
-          params: {
-            publisherId: 'OZONEGMG0001',
-            siteId: '4204204209',
-            placementId: '0420420500',
-            customData: [
-              {
-                settings: {},
-                targeting: {
-                  test_kv: ['true']
-                }
-              }
-            ],
-            ozoneData: {}
-          }
-        },
-        {
-          bidder: 'trustx',
-          params: {
-            uid: 45,
-            keywords: {
-              test_kv: ['true']
-            }
-          }
-        }
-      ]
-    },
-    {
-      code: '/19968336/header-bid-tag-1',
-      mediaTypes: {
-        banner: {
-          sizes: div2sizes
-        }
-      },
-      bids: [
-        {
-          bidder: 'appnexus',
-          params: {
-            placementId: 13144370,
-            keywords: {
-              test_kv: ['true']
-            }
-          }
-        },
-        {
-          bidder: 'ozone',
-          params: {
-            publisherId: 'OZONEGMG0001',
-            siteId: '4204204209',
-            placementId: '0420420500',
-            customData: [
-              {
-                targeting: {
-                  test_kv: ['true']
-                }
-              }
-            ]
-          }
-        }
-      ]
-    },
-    {
-      code: 'myVideoAdUnit',
-      mediaTypes: {
-        video: {
-          context: 'instream',
-          playerSize: [640, 480],
-          mimes: ['video/mp4', 'video/x-ms-wmv'],
-          protocols: [2, 3, 5, 6],
-          api: [2],
-          maxduration: 30,
-          linearity: 1
-        }
-      },
-      bids: [{
-        bidder: 'rubicon',
-        params: {
-          accountId: '9840',
-          siteId: '123564',
-          zoneId: '583584',
-          video: {
-            language: 'en'
-          },
-          visitor: {
-            test_kv: ['true']
-          }
-        }
-      }]
-    }
-  ];
 }
 
 describe('permutiveIdentityManagerIdSystem', () => {

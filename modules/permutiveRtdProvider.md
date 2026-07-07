@@ -141,11 +141,10 @@ The module reads the following localStorage keys, all of which are written by th
 | `_psegs`    | Segment IDs; IDs >= 1000000 are included in AC signals          |
 | `_pcrprs`   | Data Clean Room cohort IDs, included in AC signals              |
 | `_pssps`    | `{ ssps: [...], cohorts: [...] }` SSP bidder list and cohorts   |
-| `_papns`, `_prubicons`, `_pindexs`, `_pdfps` | Custom cohorts for appnexus, rubicon, ix and gam respectively |
-| `_ppsts`    | Privacy Sandbox Topics keyed by IAB taxonomy version            |
+| `_papns`, `_prubicons`, `_pindexs` | Custom cohorts for appnexus, rubicon and ix respectively |
 | `permutive-prebid-rtd` | Cached module configuration                          |
 
-> Note: the legacy `_ppam` key is no longer written by the Permutive SDK and is no longer read by this module.
+> Note: the legacy `_ppam`, `_pdfps` and `_ppsts` keys are no longer read by this module, and the `params.transformations` and `params.overwrites` options have been removed.
 
 ## Cohort Activation with Permutive RTD Module
 

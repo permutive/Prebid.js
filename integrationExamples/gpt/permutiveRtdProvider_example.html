@@ -10,8 +10,7 @@
 
             function setLocalStorageData () {
               const data = {
-                // Custom cohorts for the legacy bidders (gam, rubicon, appnexus, ix)
-                _pdfps: ['gam1', 'gam2'],
+                // Custom cohorts for the legacy bidders (rubicon, appnexus, ix)
                 _prubicons: ['rubicon1', 'rubicon2'],
                 _papns: ['appnexus1', 'appnexus2'],
 
@@ -176,28 +175,6 @@
                         bidders: {
                           ozone: {
                             customCohorts: { source: 'ls', key: '_pcohorts', path: 'activations.ortb2.ozone' }
-                          }
-                        },
-                        transformations: [
-                          {
-                            id: 'iab',
-                            config: {
-                              segtax: 4,
-                              iabIds: {
-                                1000001: '777777',
-                                1000002: '888888'
-                              }
-                            }
-                          }
-                        ],
-                        overwrites: {
-                          rubicon: function (bid, data, acEnabled, utils, defaultFn) {
-                            if (defaultFn){
-                              bid = defaultFn(bid, data, acEnabled)
-                            }
-                            if (data.gam && data.gam.length) {
-                              utils.deepSetValue(bid, 'params.visitor.permutive', data.gam)
-                            }
                           }
                         }
                       }
