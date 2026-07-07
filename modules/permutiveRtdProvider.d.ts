@@ -60,13 +60,7 @@ export interface PermutiveBidderConfig {
 
 export interface PermutiveRtdProviderParams {
   /**
-   * Bidder codes to share Permutive cohorts with via the Audience Connector
-   * (`p_standard` / `ac` segments).
-   */
-  acBidders?: string[];
-  /**
-   * Maximum number of cohorts to include in either the `permutive` or
-   * `p_standard` key-value. Defaults to `500`.
+   * Maximum number of cohorts written per ORTB2 location. Defaults to `500`.
    */
   maxSegs?: number;
   /**
@@ -75,9 +69,10 @@ export interface PermutiveRtdProviderParams {
    */
   enforceVendorConsent?: boolean;
   /**
-   * Per-bidder configuration for custom cohort sources. Keys are bidder codes.
-   * Listing a bidder here also causes the module to write ortb2 data for that
-   * bidder, even if it is not in `acBidders` or on Permutive's SSP list.
+   * Per-bidder configuration overrides. Keys are bidder codes. Bidders present
+   * in the cohort store's `activations.ortb2` index are routed automatically;
+   * listing a bidder here additionally allows a custom cohort source or a
+   * placement override for it.
    */
   bidders?: Record<string, PermutiveBidderConfig>;
   /**
@@ -119,8 +114,8 @@ export type PermutiveSignalLocation =
 
 /**
  * The module's internal routing unit: cohorts to deliver to a set of bidders
- * at a set of ORTB2 locations. Rules are derived from the cohort store and
- * from the legacy configuration, then merged per bidder and location.
+ * at a set of ORTB2 locations. Rules are derived from the cohort store, then
+ * merged per bidder and location.
  */
 export interface PermutiveSignalRule {
   /**

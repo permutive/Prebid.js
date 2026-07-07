@@ -1,10 +1,11 @@
 ## Prebid Config for Permutive RTD Module
 
-This module reads cohorts from Permutive and attaches them as targeting keys to bid requests.
+This module reads cohorts from the Permutive SDK's cohort store and attaches them to bid requests as first-party data.
 
 ### _Permutive Real-time Data Submodule_
 
 #### Usage
+
 Compile the Permutive RTD module into your Prebid build:
 
 ```
@@ -22,46 +23,36 @@ pbjs.setConfig({
     auctionDelay: 50, // optional auction delay
     dataProviders: [{
       name: 'permutive',
-      waitForIt: true, // should be true if there's an `auctionDelay`
-      params: {
-        acBidders: ['appnexus']
-      }
+      waitForIt: true // should be true if there's an `auctionDelay`
     }]
   },
   ...
 })
 ```
 
-#### Parameters
-
-The parameters below provide configurability for general behaviours of the RTD submodule,
-as well as enabling settings for specific use cases mentioned above (e.g. acbidders).
+No further configuration is required: the module routes cohorts according to the cohort store maintained by the Permutive SDK (see "How cohorts are routed" below), which reflects the activations configured in the Permutive dashboard. The parameters below are available for overrides and special cases.
 
 ## Parameters
 
 {: .table .table-bordered .table-striped }
-| Name                   | Type                 | Description                                                                                   | Default            |
-| ---------------------- | -------------------- | --------------------------------------------------------------------------------------------- | ------------------ |
-| name                   | String               | This should always be `permutive`                                                             | -                  |
-| waitForIt              | Boolean              | Should be `true` if there's an `auctionDelay` defined (optional)                              | `false`            |
-| params                 | Object               |                                                                                               | -                  |
-| params.acBidders       | String[]             | An array of bidder codes to share cohorts with in certain versions of Prebid, see below       | `[]`               |
-| params.maxSegs         | Integer              | Maximum number of cohorts to be included in either the `permutive` or `p_standard` key-value. | `500`              |
-| params.enforceVendorConsent | Boolean         | When `true`, require TCF vendor consent for Permutive (vendor 361). See note below.           | `false`            |
-| params.bidders         | Object               | Per-bidder configuration for custom cohort sources. Keys are bidder codes; listing a bidder here also causes the module to write ortb2 data for that bidder, even if it is not in `acBidders` or on Permutive's SSP list. | `{}` |
-| params.bidders.\<bidder\>.customCohorts | Object | Custom cohorts source configuration for a specific bidder.                                   | -                  |
-| params.bidders.\<bidder\>.customCohorts.source | String | Storage type to read custom cohorts from. Currently only `'ls'` (localStorage) is supported. | -                  |
-| params.bidders.\<bidder\>.customCohorts.key | String | The localStorage key to read custom cohorts from.                                          | -                  |
+| Name                        | Type     | Description                                                                                      | Default |
+| --------------------------- | -------- | ------------------------------------------------------------------------------------------------ | ------- |
+| name                        | String   | This should always be `permutive`                                                                | -       |
+| waitForIt                   | Boolean  | Should be `true` if there's an `auctionDelay` defined (optional)                                 | `false` |
+| params                      | Object   |                                                                                                  | -       |
+| params.maxSegs              | Integer  | Maximum number of cohorts written per ORTB2 location.                                            | `500`   |
+| params.enforceVendorConsent | Boolean  | When `true`, require TCF vendor consent for Permutive (vendor 361). See Consent below.           | `false` |
+| params.bidders              | Object   | Per-bidder overrides: a custom cohort source and/or a placement override. See below.             | `{}`    |
+| params.locations            | Object   | Additional ORTB2 location definitions, merged over the built-in defaults. See below.             | `{}`    |
+| params.placement            | Object   | Placement policy overrides mapping cohort categories to location ids. See below.                 | `{}`    |
 
 #### Consent
 
 While Permutive is listed as a TCF vendor (ID: 361), Permutive does not typically obtain vendor consent from the TCF, but instead relies on the publisher purpose consents. Publishers wishing to use TCF vendor consent instead can add 361 to their CMP and set params.enforceVendorConsent to `true`.
 
-## SDK-Driven Cohort Routing
+## How cohorts are routed
 
-In addition to the static configuration described in this document, cohort distribution can be driven by the normalised cohort store the Permutive SDK maintains under the `_pcohorts` localStorage key. This enables cohort routing to be managed from the Permutive platform without Prebid configuration changes.
-
-The store holds each cohort once under `categories`, and per-bidder reference lists under `activations.ortb2.<bidder>`:
+The Permutive SDK maintains a normalised cohort store under the `_pcohorts` localStorage key. The user's cohorts appear once, grouped by category, and each bidder carries a list of references into those categories:
 
 ```json
 {
@@ -81,155 +72,83 @@ The store holds each cohort once under `categories`, and per-bidder reference li
 }
 ```
 
-A bidder is pointed at its reference list by adding a `path` to its `customCohorts` config:
-
-```javascript
-params: {
-  bidders: {
-    appnexus: {
-      customCohorts: { source: 'ls', key: '_pcohorts', path: 'activations.ortb2.appnexus' }
-    }
-  }
-}
-```
-
-Each referenced cohort is resolved to its category via the store's `categories` index, and the category's placement policy decides which ORTB2 locations it is written to. Without a `path`, the whole key is read as a flat list of custom cohort IDs, exactly as before.
-
-Cohorts resolved from the store are merged and deduplicated with cohorts from the legacy configuration targeting the same bidder and location, and `params.maxSegs` is enforced per location after the merge.
+Every bidder listed under `activations.ortb2` receives its referenced cohorts — no Prebid configuration needed. Each referenced cohort is resolved to its category, and the category's placement policy decides which ORTB2 locations it is written to. Cohorts targeting the same location are deduplicated, and `params.maxSegs` is enforced per location.
 
 ### Locations and placement
 
-ORTB2 destinations are declared once as *locations* and referenced by id from *placement* policies. Built-in defaults mirror the legacy hard-coded routing and can be extended or overridden via `params.locations` and `params.placement` (or per bidder via `params.bidders.<bidder>.placement`):
+ORTB2 destinations are declared once as *locations* and referenced by id from *placement* policies. The built-in defaults:
+
+{: .table .table-bordered .table-striped }
+| Location id | Writes to                                                |
+| ----------- | -------------------------------------------------------- |
+| `pcom`      | `user.data` entry named `permutive.com`                   |
+| `pstd_kw`   | `user.keywords` as `p_standard=<cohort>`                  |
+| `psaud_kw`  | `user.keywords` as `p_standard_aud=<cohort>`              |
+| `pstd_ext`  | `user.ext.data.p_standard`                                |
+| `pstd_site` | `site.ext.permutive.p_standard`                           |
+| `perm`      | `user.data` entry named `permutive`                       |
+| `perm_kw`   | `user.keywords` as `permutive=<cohort>`                   |
+| `perm_ext`  | `user.ext.data.permutive`                                 |
+
+{: .table .table-bordered .table-striped }
+| Category   | Default placement                                      |
+| ---------- | ------------------------------------------------------ |
+| `standard` | `pcom`, `pstd_kw`, `pstd_ext`, `pstd_site`             |
+| `dcr`      | `pcom`, `pstd_kw`, `pstd_ext`, `pstd_site`             |
+| `curated`  | `pcom`, `pstd_kw`, `psaud_kw`, `pstd_ext`, `pstd_site` |
+| `clm`      | `perm`, `perm_kw`, `perm_ext`                          |
+| `custom`   | `perm`, `perm_kw`, `perm_ext`                          |
+
+Both can be extended or overridden via config — globally with `params.locations` / `params.placement`, or per bidder with `params.bidders.<bidder>.placement`:
 
 ```javascript
 params: {
   locations: {
-    // built-in: pcom, pstd_kw, psaud_kw, pstd_ext, pstd_site, perm, perm_kw, perm_ext
-    topics600: { path: 'user.data', name: 'permutive.com', ext: { segtax: 600 } }
+    audtax: { path: 'user.data', name: 'permutive.com', ext: { segtax: 4 } }
   },
   placement: {
-    // built-in: standard/dcr -> [pcom, pstd_kw, pstd_ext, pstd_site],
-    //           curated -> the same plus psaud_kw,
-    //           clm/custom -> [perm, perm_kw, perm_ext]
-    custom: ['topics600']
-  }
-}
-```
-
-Supported location paths:
-
-{: .table .table-bordered .table-striped }
-| Path                 | Required field | Example                                              |
-| -------------------- | -------------- | ---------------------------------------------------- |
-| `user.data`          | `name`         | `{ path: 'user.data', name: 'permutive.com' }`       |
-| `user.keywords`      | `key`          | `{ path: 'user.keywords', key: 'p_standard' }`       |
-| `user.ext.data`      | `key`          | `{ path: 'user.ext.data', key: 'p_standard' }`       |
-| `site.ext.permutive` | `key`          | `{ path: 'site.ext.permutive', key: 'p_standard' }`  |
-
-A `user.data` location may also carry an `ext` object (e.g. `{ segtax: 600 }`), which is attached to the resulting `user.data` entry. Locations with the same name but different `ext` values produce separate entries.
-
-Only the location paths listed above can be written to. Dangling cohort references and unknown location ids are dropped with a console warning, never silently.
-
-## Local Storage
-
-The module reads the following localStorage keys, all of which are written by the Permutive SDK and disclosed in [Permutive's device storage disclosure](https://assets.permutive.app/tcf/tcf.json):
-
-{: .table .table-bordered .table-striped }
-| Key         | Contents                                                       |
-| ----------- | -------------------------------------------------------------- |
-| `_pcohorts` | Normalised cohort store: categories and per-bidder activations (see above) |
-| `_psegs`    | Segment IDs; IDs >= 1000000 are included in AC signals          |
-| `_pcrprs`   | Data Clean Room cohort IDs, included in AC signals              |
-| `_pssps`    | `{ ssps: [...], cohorts: [...] }` SSP bidder list and cohorts   |
-| `_papns`, `_prubicons`, `_pindexs` | Custom cohorts for appnexus, rubicon and ix respectively |
-| `permutive-prebid-rtd` | Cached module configuration                          |
-
-> Note: the legacy `_ppam`, `_pdfps` and `_ppsts` keys are no longer read by this module, and the `params.transformations` and `params.overwrites` options have been removed.
-
-## Cohort Activation with Permutive RTD Module
-
-**Note**: Publishers must be enabled on the above Permutive RTD Submodule to enable Standard Cohorts.
-
-### _Enabling Publisher Cohorts_
-
-#### Standard Cohorts
-
-The Permutive RTD module sets Standard Cohort IDs as bidder-specific ortb2.user.data first-party data, following the Prebid ortb2 convention. Cohorts will be sent in the `p_standard` key-value.
-
-For Prebid versions below 7.29.0, populate the acbidders config in the Permutive RTD with an array of bidder codes with whom you wish to share Standard Cohorts with. You also need to permission the bidders by communicating the bidder list to the Permutive team at strategicpartnershipops@permutive.com.
-
-For Prebid versions 7.29.0 and above, do not populate bidder codes in acbidders for the purpose of sharing Standard Cohorts (Note: there may be other business needs that require you to populate acbidders for Prebid versions 7.29.0+, see Advertiser Cohorts below). To share Standard Cohorts with bidders in Prebid versions 7.29.0 and above, communicate the bidder list to the Permutive team at strategicpartnershipops@permutive.com.
-
-#### _Bidder Specific Requirements for Standard Cohorts_
-For PubMatic or OpenX: Please ensure you are using Prebid.js 7.13 (or later)
-For Xandr: Please ensure you are using Prebid.js 7.29 (or later)
-For Equativ: Please ensure you are using Prebid.js 7.26 (or later)
-
-#### Custom Cohorts
-
-The Permutive RTD module also supports passing any of the **Custom** Cohorts created in the dashboard to some SSP partners for targeting
-e.g. setting up publisher deals. For these activations, cohort IDs are set in bidder-specific locations per ad unit (custom parameters).
-
-Currently, bidders with known support for custom cohort targeting are:
-
-- Xandr
-- Magnite
-- Microsoft (msft)
-
-When enabling the respective Activation for a cohort in Permutive, this module will automatically attach that cohort ID to the bid request.
-There is no need to enable individual bidders in the module configuration, it will automatically reflect which SSP integrations you have enabled in your Permutive dashboard.
-Permutive cohorts will be sent in the permutive key-value.
-
-**Note:** Publishers migrating from the `appnexus` bidder to `msft` need to configure the `params.bidders` object so the module knows where to read custom cohorts from. The Permutive SDK writes `msft` custom cohorts to the same localStorage key used by `appnexus` (`_papns`), so publishers should add the following to their Permutive RTD config:
-
-```javascript
-params: {
-  acBidders: ['msft'],
+    curated: ['audtax', 'psaud_kw']
+  },
   bidders: {
-    msft: {
-      customCohorts: { source: 'ls', key: '_papns' }
+    rubicon: {
+      placement: { custom: ['perm'] }
     }
   }
 }
 ```
 
+Supported location paths are `user.data` (requires `name`, optional `ext`), `user.keywords`, `user.ext.data` and `site.ext.permutive` (each requires `key`). Only these paths can be written to. A `user.data` location's `ext` (e.g. `{ segtax: 600 }`) is attached to the resulting entry, and locations with the same name but different `ext` values produce separate entries. Dangling cohort references and unknown location ids are dropped with a console warning, never silently.
 
-### _Enabling Advertiser Cohorts_
+### Custom cohort sources
 
-If you are connecting to an Advertiser seat within Permutive to share Advertiser Cohorts,  populate the acbidders config in the Permutive RTD with an array of bidder codes with whom you wish to share Advertiser Cohorts with.
+A bidder can be pointed at a different cohort source with `params.bidders.<bidder>.customCohorts`:
 
-### _Managing acbidders_
+```javascript
+params: {
+  bidders: {
+    msft: {
+      // With a path: read the reference list at that path and resolve it
+      // against that store's categories
+      customCohorts: { source: 'ls', key: '_pcohorts', path: 'activations.ortb2.msft' }
+    },
+    other: {
+      // Without a path: read the whole key as a flat list of custom cohort IDs
+      customCohorts: { source: 'ls', key: '_pcustom_other' }
+    }
+  }
+}
+```
 
-If your business needs require you to populate acbidders with bidder codes based on the criteria above, there are **two** ways to manage it.
+## Local Storage
 
-#### Option 1 - Automated
+The module reads the following localStorage keys, written by the Permutive SDK and disclosed in [Permutive's device storage disclosure](https://assets.permutive.app/tcf/tcf.json):
 
-If you are using Prebid.js v7.13.0+, bidders may be added to or removed from the acbidders config directly within the Permutive Dashboard.
+{: .table .table-bordered .table-striped }
+| Key                    | Contents                                                       |
+| ---------------------- | -------------------------------------------------------------- |
+| `_pcohorts`            | Normalised cohort store: categories and per-bidder activations |
+| `permutive-prebid-rtd` | Cached module configuration                                    |
 
-**Permutive can do this on your behalf**. Simply contact your Permutive CSM with strategicpartnershipops@permutive.com on cc,
-indicating which bidders you would like added.
+Keys configured via `params.bidders.<bidder>.customCohorts.key` are also read.
 
-Or, a publisher may do this themselves within the Permutive Dashboard using the below instructions.
-
-##### Create Integration
-
-In order to manage acbidders via the Permutive dashboard, it is necessary to first enable the Prebid integration via the integrations page (settings).
-
-**Note on Revenue Insights:** The prebid integration includes a feature for revenue insights,
-which is not required for the purpose of updating acbidders config.
-Please see [this document](https://support.permutive.com/hc/en-us/articles/360019044079-Revenue-Insights) for more information about revenue insights.
-
-##### Update acbidders
-
-The input for the “Data Provider config” is a multi-input free text. A valid “bidder code” needs to be entered in order to enable Standard or Advertiser Cohorts to be passed to the desired partner. The [prebid Bidders page](https://docs.prebid.org/dev-docs/bidders.html) contains instructions and a link to a list of possible bidder codes.
-
-Bidders can be added or removed from acbidders using this feature, however, this will not impact any bidders that have been applied using the manual method below.
-
-#### Option 2 - Manual
-
-As a secondary option, bidders may be added manually.
-
-To do so, define which bidders should receive Standard or Advertiser Cohorts by
-including the _bidder code_ of any bidder in the `acBidders` array.
-
-**Note:** If you ever need to remove a manually-added bidder, the bidder will also need to be removed manually.
+> Note: the legacy keys read by earlier versions of this module (`_psegs`, `_ppam`, `_pcrprs`, `_pssps`, `_papns`, `_prubicons`, `_pindexs`, `_pdfps`, `_ppsts`) are no longer read, and the `params.acBidders`, `params.transformations` and `params.overwrites` options have been removed. Cohort routing is driven by the `_pcohorts` store instead.
